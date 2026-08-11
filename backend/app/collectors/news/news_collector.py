@@ -20,25 +20,31 @@ RSS_FEEDS = [
     {"name": "Rhein-Sieg-Anzeiger", "url": "https://www.ksta.de/region/rhein-sieg-bonn/feed.rss"},
     {"name": "Polizei Bonn", "url": "https://bonn.polizei.nrw/presse/feed"},
     {"name": "Feuerwehr Troisdorf", "url": "https://www.troisdorf.de/web/de/rathaus/news/rss.htm"},
+    {"name": "Feuerwehr Bonn", "url": "https://www.bonn.de/pressemitteilungen.feed"},
+    {"name": "WDR Lokalzeit Bonn", "url": "https://www1.wdr.de/nachrichten/rheinland/lokalzeit-bonn-100~_format-mp-100.feed"},
 ]
 
 KEYWORDS_HIGH = [
     "hochwasser", "überschwemmung", "evakuierung", "großeinsatz", "katastrophe",
     "explosion", "brand", "feuer", "waldbrand", "unwetter", "tornado",
     "chemieunfall", "gefahrgut", "massenanfall", "manv", "amoklauf",
-    "bombenentschärfung", "bombendrohung", "terrorismus",
+    "bombenentschärfung", "bombendrohung", "terrorismus", "erdbeben",
+    "dammbruch", "deichbruch", "flutwelle", "stromausfall",
 ]
 
 KEYWORDS_MEDIUM = [
     "unfall", "sperrung", "stromausfall", "starkregen", "gewitter",
     "sturmwarnung", "hitzewelle", "drk", "rotes kreuz", "rettungsdienst",
     "feuerwehr", "polizei", "sirene", "warnung", "gefahr",
-    "rhein", "sieg", "agger", "troisdorf", "siegburg",
+    "rhein", "sieg", "agger", "troisdorf", "siegburg", "wahner heide",
+    "notarzt", "rettungshubschrauber", "schwerverletzt", "tödlich",
+    "vermisst", "bergrettung", "wasserrettung", "großübung",
 ]
 
 KEYWORDS_LOW = [
     "verkehr", "stau", "baustelle", "veranstaltung", "demo",
-    "demonstration", "festival", "konzert", "sport",
+    "demonstration", "festival", "konzert", "sport", "marathon",
+    "karnevalszug", "schützenfest", "stadtfest",
 ]
 
 
@@ -83,20 +89,70 @@ async def collect_news():
             except Exception as e:
                 logger.warning(f"Error fetching feed {feed_info['name']}: {e}")
 
+    new_items = []
     async with async_session() as session:
-        saved = 0
+        from sqlalchemy import select
         for data in results:
-            from sqlalchemy import select
             stmt = select(NewsItem).where(NewsItem.content_hash == data["content_hash"])
             existing = (await session.execute(stmt)).scalar_one_or_none()
             if not existing:
                 entry = NewsItem(**data)
                 session.add(entry)
-                saved += 1
+                new_items.append(data)
         await session.commit()
 
-    logger.info(f"Collected {len(results)} news items, {saved} new")
+    if new_items:
+        await _run_llm_analysis(new_items)
+
+    logger.info(f"Collected {len(results)} news items, {len(new_items)} new")
     return results
+
+
+async def _run_llm_analysis(new_items: list[dict]):
+    from app.services.analysis.llm_analyzer import analyzer
+
+    candidates = [item for item in new_items if item["relevance_score"] >= 0.1]
+
+    if not candidates:
+        logger.info("No candidates for LLM analysis")
+        return
+
+    logger.info(f"Running LLM analysis on {len(candidates)} articles...")
+
+    for item in candidates:
+        try:
+            analysis = await analyzer.analyze_article(
+                title=item["title"],
+                summary=item.get("summary", ""),
+                source=item["source"],
+                published=item["published_at"].isoformat() if item.get("published_at") else None,
+            )
+
+            if analysis is None:
+                continue
+
+            async with async_session() as session:
+                from sqlalchemy import select
+                stmt = select(NewsItem).where(NewsItem.content_hash == item["content_hash"])
+                db_item = (await session.execute(stmt)).scalar_one_or_none()
+                if db_item:
+                    db_item.ai_analysis = analysis
+                    llm_score = analysis.get("relevance_score", 0)
+                    keyword_score = item["relevance_score"]
+                    db_item.relevance_score = (keyword_score * 0.3) + (llm_score * 0.7)
+                    db_item.is_relevant = db_item.relevance_score > 0.3
+                    if analysis.get("category") and analysis["category"] != "sonstiges":
+                        db_item.category = analysis["category"]
+                    await session.commit()
+
+                    if analysis.get("escalation_potential") in ("high", "critical"):
+                        logger.warning(
+                            f"HIGH ESCALATION NEWS: [{item['source']}] {item['title']} "
+                            f"- {analysis.get('drk_relevance', '')}"
+                        )
+
+        except Exception as e:
+            logger.error(f"LLM analysis failed for '{item['title'][:60]}': {e}")
 
 
 def _calculate_relevance(title: str, summary: str) -> float:
@@ -121,12 +177,14 @@ def _calculate_relevance(title: str, summary: str) -> float:
 def _detect_category(title: str, summary: str) -> str:
     text = f"{title} {summary}".lower()
     categories = {
-        "hochwasser": ["hochwasser", "überschwemmung", "pegel", "rhein", "sieg"],
-        "brand": ["brand", "feuer", "waldbrand", "explosion"],
-        "unwetter": ["unwetter", "sturm", "gewitter", "starkregen", "tornado", "hagel"],
-        "verkehr": ["unfall", "sperrung", "stau", "verkehr", "autobahn"],
-        "sicherheit": ["polizei", "bomben", "terror", "amoklauf", "gefahrgut"],
-        "gesundheit": ["drk", "rettung", "manv", "krankenhaus", "notfall"],
+        "hochwasser": ["hochwasser", "überschwemmung", "pegel", "rhein", "sieg", "deich", "damm"],
+        "brand": ["brand", "feuer", "waldbrand", "explosion", "rauch"],
+        "unwetter": ["unwetter", "sturm", "gewitter", "starkregen", "tornado", "hagel", "orkan"],
+        "verkehr": ["unfall", "sperrung", "stau", "verkehr", "autobahn", "bahnstrecke"],
+        "sicherheit": ["polizei", "bomben", "terror", "amoklauf", "gefahrgut", "schuss"],
+        "gesundheit": ["drk", "rettung", "manv", "krankenhaus", "notfall", "verletzt"],
+        "infrastruktur": ["stromausfall", "wasserausfall", "gasaustritt", "infrastruktur"],
+        "veranstaltung": ["festival", "konzert", "marathon", "karnevalszug", "schützenfest"],
     }
     for cat, keywords in categories.items():
         if any(kw in text for kw in keywords):
