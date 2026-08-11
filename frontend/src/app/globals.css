@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #121212;
+  --bg-secondary: #1e1e1e;
+  --bg-card: #252525;
+  --bg-card-hover: #2a2a2a;
+  --text-primary: #e7e7e7;
+  --text-secondary: #b0b0b0;
+  --text-muted: #888888;
+  --border: #333333;
+  --drk-red: #e81e1e;
+  --drk-red-dark: #a31515;
+  --score-green: #22c55e;
+  --score-yellow: #eab308;
+  --score-orange: #f97316;
+  --score-red: #ef4444;
+  --score-purple: #a855f7;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.score-gauge {
+  background: conic-gradient(
+    var(--score-green) 0deg,
+    var(--score-yellow) 90deg,
+    var(--score-orange) 180deg,
+    var(--score-red) 270deg,
+    var(--score-purple) 360deg
+  );
+}
+
+.card {
+  @apply bg-dark-800 rounded-lg border border-dark-700 p-4;
+}
+
+.card-hover {
+  @apply card transition-colors hover:bg-dark-700;
+}
+
+.badge-green { @apply bg-green-500/20 text-green-400 px-2 py-0.5 rounded text-xs font-medium; }
+.badge-yellow { @apply bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded text-xs font-medium; }
+.badge-orange { @apply bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded text-xs font-medium; }
+.badge-red { @apply bg-red-500/20 text-red-400 px-2 py-0.5 rounded text-xs font-medium; }
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(232, 30, 30, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(232, 30, 30, 0.6); }
+}
+
+.alert-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.leaflet-container {
+  background: var(--bg-secondary) !important;
+  border-radius: 0.5rem;
+}
