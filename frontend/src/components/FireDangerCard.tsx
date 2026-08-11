@@ -19,11 +19,13 @@ export default function FireDangerCard({ riskData }: FireDangerCardProps) {
   const [dwdIndex, setDwdIndex] = useState<number | null>(null);
 
   useEffect(() => {
-    apiFetch<any>('/api/dashboard/fire-risks')
+    apiFetch<any>('/api/dashboard/fire')
       .then((d) => {
         const risks = d?.risks || [];
-        if (risks.length > 0 && risks[0].risk_index != null) {
-          setDwdIndex(Math.min(5, Math.max(1, Math.round(risks[0].risk_index))));
+        // Neuester Eintrag der offiziellen DWD-WBI-Quelle (nicht Satellit)
+        const dwd = risks.find((r: any) => r.source === 'dwd_fire_index' && r.risk_index != null);
+        if (dwd) {
+          setDwdIndex(Math.min(5, Math.max(1, Math.round(dwd.risk_index))));
         }
       })
       .catch(() => {});

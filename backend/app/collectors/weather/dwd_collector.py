@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 DWD_WARNINGS_URL = "https://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json"
 DWD_OPEN_DATA = "https://opendata.dwd.de"
 DWD_MOSMIX_BASE = f"{DWD_OPEN_DATA}/weather/local_forecasts/mos/MOSMIX_L/single_stations"
-DWD_RADAR_BASE = f"{DWD_OPEN_DATA}/weather/radar/composite/px250_rw"
+DWD_RADAR_BASE = f"{DWD_OPEN_DATA}/weather/radar/composite/rv"
 
 REGION_WARNCELL_IDS = [
     "105370000",  # Rhein-Sieg-Kreis
@@ -124,7 +124,7 @@ async def collect_radar_data():
                 "severity": 0,
                 "title": "Radarkomposit",
                 "description": "DWD Radarkomposit Niederschlag",
-                "parameters": {"type": "px250_rw"},
+                "parameters": {"type": "rv"},
                 "valid_from": datetime.utcnow(),
                 "source": "dwd_radar",
             }

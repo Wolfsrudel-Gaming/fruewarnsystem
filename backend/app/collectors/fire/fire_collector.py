@@ -1,3 +1,4 @@
+import gzip
 import logging
 from datetime import datetime
 
@@ -9,7 +10,12 @@ from app.models.schemas import FireRisk
 
 logger = logging.getLogger(__name__)
 
-DWD_FIRE_INDEX_URL = "https://opendata.dwd.de/climate_environment/health/alerts/s31fg.json"
+# Offizieller DWD-Waldbrandgefahrenindex (WBI), täglich ~05:00 UTC aktualisiert.
+# CSV pro Station: StationsID;Termin;wbi_0..wbi_6 (heute + 6 Folgetage, Stufen 1-5)
+DWD_WBI_BASE = "https://opendata.dwd.de/climate_environment/CDC/derived_germany/fire_danger_index/woodland/forecast/recent"
+DWD_WBI_VERSION = "v2-3--0"
+# Station 2667 = Köln/Bonn, liegt direkt in der Wahner Heide
+DWD_WBI_STATIONS = {"2667": "Köln/Bonn (Wahner Heide)"}
 NASA_FIRMS_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 
 WAHNER_HEIDE_BBOX = {
@@ -43,36 +49,51 @@ async def collect_fire_risk():
 
 async def _fetch_dwd_fire_index(client: httpx.AsyncClient) -> list:
     results = []
-    try:
-        resp = await client.get(DWD_FIRE_INDEX_URL, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+    for station_id, station_name in DWD_WBI_STATIONS.items():
+        try:
+            url = (
+                f"{DWD_WBI_BASE}/derived_germany_fire_danger_index_woodland_"
+                f"forecast_recent_{station_id}_{DWD_WBI_VERSION}.csv.gz"
+            )
+            resp = await client.get(url, timeout=30)
+            resp.raise_for_status()
 
-        relevant_regions = ["rhein-sieg", "köln", "bonn", "troisdorf", "nordrhein"]
-        for entry in data if isinstance(data, list) else [data]:
-            region = entry.get("region", entry.get("name", "")).lower()
-            if any(r in region for r in relevant_regions):
-                results.append({
-                    "region": entry.get("region", entry.get("name", "NRW")),
-                    "risk_index": entry.get("value", entry.get("index", 1)),
-                    "temperature": entry.get("temperature"),
-                    "humidity": entry.get("humidity"),
-                    "wind_speed": entry.get("wind_speed"),
-                    "wind_direction": entry.get("wind_direction"),
-                    "rain_last_24h": entry.get("precipitation_24h"),
-                    "source": "dwd_fire_index",
-                    "timestamp": datetime.utcnow(),
-                    "raw_data": entry,
-                })
-    except Exception as e:
-        logger.warning(f"Error fetching DWD fire index: {e}")
-        results.append({
-            "region": settings.region,
-            "risk_index": 0,
-            "source": "dwd_fire_index",
-            "timestamp": datetime.utcnow(),
-            "raw_data": {"error": str(e)},
-        })
+            lines = gzip.decompress(resp.content).decode("latin-1").strip().splitlines()
+            if len(lines) < 2:
+                continue
+
+            header = [h.strip() for h in lines[0].split(";")]
+            latest = [v.strip() for v in lines[-1].split(";")]
+            row = dict(zip(header, latest))
+
+            issued = datetime.strptime(row["Termin"], "%Y%m%d %H:%M")
+            # wbi_0 gilt für den Ausgabetag; liegt der zurück, entsprechend
+            # in die Vorhersagespalten verschieben (Ausgabe nur 1x täglich)
+            offset = max(0, (datetime.utcnow().date() - issued.date()).days)
+            if offset > 6:
+                logger.warning(f"DWD WBI für Station {station_id} veraltet (Ausgabe {issued})")
+                continue
+
+            today_index = int(row[f"wbi_{offset}"])
+            forecast = {
+                f"+{i - offset}d": int(row[f"wbi_{i}"])
+                for i in range(offset, 7)
+                if row.get(f"wbi_{i}", "").isdigit()
+            }
+
+            results.append({
+                "region": station_name,
+                "risk_index": today_index,
+                "source": "dwd_fire_index",
+                "timestamp": datetime.utcnow(),
+                "raw_data": {
+                    "station_id": station_id,
+                    "issued": issued.isoformat(),
+                    "forecast": forecast,
+                },
+            })
+        except Exception as e:
+            logger.warning(f"Error fetching DWD fire index for station {station_id}: {e}")
 
     return results
 

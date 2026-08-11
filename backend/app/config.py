@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     ha_discovery_prefix: str = "homeassistant"
 
     # DWD
-    dwd_station_id: str = "02667"  # Köln-Bonn
+    dwd_station_id: str = "10513"  # MOSMIX-Station Köln/Bonn Flughafen
 
     # Pegel
     pegel_stations: str = "KOELN,BONN,TROISDORF,SIEGBURG"
