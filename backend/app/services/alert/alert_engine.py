@@ -9,7 +9,8 @@ from app.models.database import async_session
 from app.models.schemas import (
     Alert, AlertCategory, AlertThreshold, RiskScore,
     WaterLevel, WeatherData, FireRisk, AirQuality, NewsItem,
-    OfficialWarning, TrafficEvent,
+    OfficialWarning, TrafficEvent, EarthquakeEvent, RadiationReading,
+    ICUCapacity, GridStatus, RiverShippingWarning, EventCalendar,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,12 @@ async def calculate_risk_scores() -> dict:
         scores["traffic"] = await _calc_traffic_score(session)
         scores["official_warning"] = await _calc_warning_score(session)
         scores["news"] = await _calc_news_score(session)
+        scores["seismic"] = await _calc_seismic_score(session)
+        scores["radiation"] = await _calc_radiation_score(session)
+        scores["health"] = await _calc_health_score(session)
+        scores["power"] = await _calc_power_score(session)
+        scores["events"] = await _calc_events_score(session)
+        scores["shipping"] = await _calc_shipping_score(session)
 
         total = sum(s["score"] * s.get("weight", 1.0) for s in scores.values())
         total_weight = sum(s.get("weight", 1.0) for s in scores.values())
@@ -500,6 +507,264 @@ async def _calc_news_score(session) -> dict:
     }
 
 
+async def _calc_seismic_score(session) -> dict:
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    stmt = (
+        select(EarthquakeEvent)
+        .where(EarthquakeEvent.created_at > cutoff)
+        .order_by(EarthquakeEvent.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    events = result.scalars().all()
+
+    if not events:
+        return {"score": 0, "weight": 0.8, "detail": "Keine Erdbeben", "contributions": []}
+
+    max_mag = max((e.magnitude or 0) for e in events)
+    contributions = []
+
+    for e in events:
+        mag = e.magnitude or 0
+        if mag < 2.0:
+            continue
+        score = 0
+        if mag >= 5.0:
+            score = 100
+        elif mag >= 4.0:
+            score = 70
+        elif mag >= 3.0:
+            score = 40
+        elif mag >= 2.5:
+            score = 15
+        else:
+            score = 5
+
+        contributions.append(_contrib(
+            source=f"{e.source} - {e.location or 'Unbekannt'}",
+            source_type="seismic",
+            value=f"M{mag:.1f} (Tiefe: {e.depth_km} km)",
+            points=score,
+            reason=f"Erdbeben M{mag:.1f} bei {e.location}",
+            ts=e.event_time,
+        ))
+
+    best = max((c["points"] for c in contributions), default=0)
+    return {
+        "score": min(100, best),
+        "weight": 0.8,
+        "detail": f"{len(events)} Erdbeben, max M{max_mag:.1f}" if max_mag > 0 else "Keine relevanten Erdbeben",
+        "contributions": contributions,
+    }
+
+
+async def _calc_radiation_score(session) -> dict:
+    cutoff = datetime.utcnow() - timedelta(hours=6)
+    stmt = (
+        select(RadiationReading)
+        .where(RadiationReading.created_at > cutoff)
+        .order_by(RadiationReading.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    readings = result.scalars().all()
+
+    if not readings:
+        return {"score": 0, "weight": 1.0, "detail": "Keine Daten", "contributions": []}
+
+    elevated = [r for r in readings if r.is_elevated]
+    max_dose = max((r.gamma_dose_rate or 0) for r in readings)
+    contributions = []
+
+    for r in elevated:
+        dose = r.gamma_dose_rate or 0
+        score = min(100, (dose - 300) / 7)
+        contributions.append(_contrib(
+            source=f"BfS ODL - {r.station_name or r.station_id}",
+            source_type="radiation",
+            value=f"{dose:.0f} nSv/h",
+            points=score,
+            reason=f"Erhöhte Gamma-Dosisleistung (Schwelle: 300 nSv/h)",
+            ts=r.timestamp,
+        ))
+
+    best = max((c["points"] for c in contributions), default=0)
+    return {
+        "score": min(100, best),
+        "weight": 1.0,
+        "detail": f"Max {max_dose:.0f} nSv/h, {len(elevated)} erhöht" if elevated else f"Normal ({max_dose:.0f} nSv/h)",
+        "contributions": contributions,
+    }
+
+
+async def _calc_health_score(session) -> dict:
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    stmt = (
+        select(ICUCapacity)
+        .where(ICUCapacity.created_at > cutoff)
+        .order_by(ICUCapacity.created_at.desc())
+    )
+    result = await session.execute(stmt)
+    readings = result.scalars().all()
+
+    if not readings:
+        return {"score": 0, "weight": 0.5, "detail": "Keine Daten", "contributions": []}
+
+    seen_regions = set()
+    latest = []
+    for r in readings:
+        if r.region_id not in seen_regions:
+            seen_regions.add(r.region_id)
+            latest.append(r)
+
+    max_occupancy = max((r.occupancy_rate or 0) for r in latest)
+    contributions = []
+
+    for r in latest:
+        occ = r.occupancy_rate or 0
+        if occ < 0.8:
+            continue
+        score = min(100, (occ - 0.8) * 500)
+        contributions.append(_contrib(
+            source=f"DIVI - {r.region_name or r.region_id}",
+            source_type="icu",
+            value=f"{occ:.0%} belegt ({r.beds_free} frei)",
+            points=score,
+            reason=f"ICU-Auslastung über 80%",
+            ts=r.timestamp,
+        ))
+
+    best = max((c["points"] for c in contributions), default=0)
+    return {
+        "score": min(100, best),
+        "weight": 0.5,
+        "detail": f"Max. ICU-Auslastung {max_occupancy:.0%}",
+        "contributions": contributions,
+    }
+
+
+async def _calc_power_score(session) -> dict:
+    cutoff = datetime.utcnow() - timedelta(hours=6)
+    stmt = (
+        select(GridStatus)
+        .where(GridStatus.created_at > cutoff)
+        .order_by(GridStatus.created_at.desc())
+        .limit(5)
+    )
+    result = await session.execute(stmt)
+    readings = result.scalars().all()
+
+    if not readings:
+        return {"score": 0, "weight": 0.7, "detail": "Keine Daten", "contributions": []}
+
+    contributions = []
+    stressed = [r for r in readings if r.is_stressed]
+
+    for r in stressed:
+        balance = r.balance_mw or 0
+        score = 0
+        if balance < -5000:
+            score = 90
+        elif balance < -1000:
+            score = 60
+        elif balance < 0:
+            score = 30
+        else:
+            score = 15
+
+        contributions.append(_contrib(
+            source=f"SMARD Bundesnetzagentur - {r.region}",
+            source_type="grid",
+            value=f"Balance {balance:.0f} MW",
+            points=score,
+            reason=r.stress_indicator or "Netzbelastung",
+            ts=r.timestamp,
+        ))
+
+    best = max((c["points"] for c in contributions), default=0)
+    latest = readings[0]
+    detail = f"Balance {latest.balance_mw:.0f} MW" if latest.balance_mw else "Keine Belastung"
+    if stressed:
+        detail = f"Netzstress: {len(stressed)} Meldungen"
+
+    return {
+        "score": min(100, best),
+        "weight": 0.7,
+        "detail": detail,
+        "contributions": contributions,
+    }
+
+
+async def _calc_events_score(session) -> dict:
+    cutoff = datetime.utcnow() - timedelta(hours=48)
+    stmt = (
+        select(EventCalendar)
+        .where(EventCalendar.created_at > cutoff)
+        .order_by(EventCalendar.risk_score.desc())
+    )
+    result = await session.execute(stmt)
+    events = result.scalars().all()
+
+    if not events:
+        return {"score": 0, "weight": 0.4, "detail": "Keine Veranstaltungen", "contributions": []}
+
+    high_risk = [e for e in events if (e.risk_score or 0) >= 0.5]
+    contributions = []
+
+    for e in high_risk[:10]:
+        score = (e.risk_score or 0) * 80
+        contributions.append(_contrib(
+            source=f"{e.source or 'Unbekannt'} - {e.location or ''}",
+            source_type="event",
+            value=f"Risiko {e.risk_score:.1f}",
+            points=score,
+            reason=e.title or "Veranstaltung",
+            ts=e.starts_at,
+        ))
+
+    best = max((c["points"] for c in contributions), default=0)
+    return {
+        "score": min(100, best),
+        "weight": 0.4,
+        "detail": f"{len(events)} Veranstaltungen, {len(high_risk)} mit erhöhtem Risiko",
+        "contributions": contributions,
+    }
+
+
+async def _calc_shipping_score(session) -> dict:
+    stmt = select(RiverShippingWarning).where(RiverShippingWarning.is_active == True)
+    result = await session.execute(stmt)
+    warnings = result.scalars().all()
+
+    if not warnings:
+        return {"score": 0, "weight": 0.3, "detail": "Keine Warnungen", "contributions": []}
+
+    contributions = []
+    type_scores = {"closure": 60, "high_water": 50, "low_water": 40, "ice": 50, "construction": 10, "general": 15}
+
+    for w in warnings:
+        score = type_scores.get(w.warning_type, 15)
+        contributions.append(_contrib(
+            source=f"ELWIS - {w.river or 'Unbekannt'}",
+            source_type="shipping",
+            value=f"{w.warning_type}",
+            points=score,
+            reason=w.title or "Schifffahrtswarnung",
+            ts=w.valid_from or w.created_at,
+        ))
+
+    best = max((c["points"] for c in contributions), default=0)
+    closures = sum(1 for w in warnings if w.warning_type == "closure")
+    detail = f"{len(warnings)} Warnungen"
+    if closures:
+        detail += f", {closures} Sperrungen"
+
+    return {
+        "score": min(100, best),
+        "weight": 0.3,
+        "detail": detail,
+        "contributions": contributions,
+    }
+
+
 async def seed_default_thresholds():
     async with async_session() as session:
         existing = await session.execute(select(func.count(AlertThreshold.id)))
@@ -552,6 +817,54 @@ async def seed_default_thresholds():
                 name="Schwerer Verkehrsunfall",
                 condition={"min_score": 70},
                 score_contribution=15,
+                notification_channels=["push"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.SEISMIC,
+                name="Erdbeben-Warnung",
+                condition={"min_score": 40},
+                score_contribution=20,
+                notification_channels=["push", "telegram"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.RADIATION,
+                name="Erhöhte Strahlung",
+                condition={"min_score": 20},
+                score_contribution=30,
+                notification_channels=["push", "telegram", "sms"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.HEALTH,
+                name="ICU-Kapazitätsengpass",
+                condition={"min_score": 50},
+                score_contribution=15,
+                notification_channels=["push"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.POWER,
+                name="Stromnetz-Belastung",
+                condition={"min_score": 60},
+                score_contribution=20,
+                notification_channels=["push", "telegram"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.EVENTS,
+                name="Großveranstaltung",
+                condition={"min_score": 50},
+                score_contribution=10,
+                notification_channels=["push"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.SHIPPING,
+                name="Schifffahrts-Sperrung",
+                condition={"min_score": 40},
+                score_contribution=10,
                 notification_channels=["push"],
                 is_enabled=True,
             ),
