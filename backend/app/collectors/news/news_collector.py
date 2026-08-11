@@ -30,6 +30,7 @@ KEYWORDS_HIGH = [
     "chemieunfall", "gefahrgut", "massenanfall", "manv", "amoklauf",
     "bombenentschärfung", "bombendrohung", "terrorismus", "erdbeben",
     "dammbruch", "deichbruch", "flutwelle", "stromausfall",
+    "dürre", "trinkwassernotstand", "wassernotstand",
 ]
 
 KEYWORDS_MEDIUM = [
@@ -39,12 +40,15 @@ KEYWORDS_MEDIUM = [
     "rhein", "sieg", "agger", "troisdorf", "siegburg", "wahner heide",
     "notarzt", "rettungshubschrauber", "schwerverletzt", "tödlich",
     "vermisst", "bergrettung", "wasserrettung", "großübung",
+    "niedrigwasser", "trockenheit", "wassermangel", "pegel niedrig",
+    "hitzetote", "trinkwasser", "bewässerungsverbot", "fischsterben",
 ]
 
 KEYWORDS_LOW = [
     "verkehr", "stau", "baustelle", "veranstaltung", "demo",
     "demonstration", "festival", "konzert", "sport", "marathon",
     "karnevalszug", "schützenfest", "stadtfest",
+    "pegelstand", "wasserstand",
 ]
 
 
@@ -177,13 +181,17 @@ def _calculate_relevance(title: str, summary: str) -> float:
 def _detect_category(title: str, summary: str) -> str:
     text = f"{title} {summary}".lower()
     categories = {
-        "hochwasser": ["hochwasser", "überschwemmung", "pegel", "rhein", "sieg", "deich", "damm"],
+        "hochwasser": ["hochwasser", "überschwemmung", "pegel", "rhein", "sieg", "deich", "damm",
+                       "niedrigwasser", "dürre", "trockenheit", "wassermangel", "fischsterben"],
         "brand": ["brand", "feuer", "waldbrand", "explosion", "rauch"],
-        "unwetter": ["unwetter", "sturm", "gewitter", "starkregen", "tornado", "hagel", "orkan"],
+        "unwetter": ["unwetter", "sturm", "gewitter", "starkregen", "tornado", "hagel", "orkan",
+                     "hitzewelle", "hitzewarnung"],
         "verkehr": ["unfall", "sperrung", "stau", "verkehr", "autobahn", "bahnstrecke"],
         "sicherheit": ["polizei", "bomben", "terror", "amoklauf", "gefahrgut", "schuss"],
-        "gesundheit": ["drk", "rettung", "manv", "krankenhaus", "notfall", "verletzt"],
-        "infrastruktur": ["stromausfall", "wasserausfall", "gasaustritt", "infrastruktur"],
+        "gesundheit": ["drk", "rettung", "manv", "krankenhaus", "notfall", "verletzt",
+                       "hitzetote", "trinkwasser"],
+        "infrastruktur": ["stromausfall", "wasserausfall", "gasaustritt", "infrastruktur",
+                          "trinkwassernotstand", "wassernotstand"],
         "veranstaltung": ["festival", "konzert", "marathon", "karnevalszug", "schützenfest"],
     }
     for cat, keywords in categories.items():

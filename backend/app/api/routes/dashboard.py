@@ -80,15 +80,20 @@ async def get_water_levels(
     result = await db.execute(stmt)
     levels = result.scalars().all()
 
+    from app.collectors.water.pegel_collector import classify_water_level
+
     stations = {}
     for l in levels:
         if l.station_id not in stations:
+            classification = classify_water_level(l.level_cm, l.river or "")
             stations[l.station_id] = {
                 "station_id": l.station_id,
                 "station_name": l.station_name,
                 "river": l.river,
                 "current_level": l.level_cm,
                 "trend": l.trend,
+                "warning_level": classification["warning_level"],
+                "condition": classification["condition"],
                 "last_update": l.timestamp.isoformat() if l.timestamp else None,
                 "history": [],
             }

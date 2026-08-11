@@ -20,7 +20,7 @@ async def calculate_risk_scores() -> dict:
     async with async_session() as session:
         scores["water"] = await _calc_water_score(session)
         scores["weather"] = await _calc_weather_score(session)
-        scores["fire"] = await _calc_fire_score(session)
+        scores["fire"] = await _calc_fire_score(session, drought_indicator=scores["water"].get("drought_indicator", 0))
         scores["air_quality"] = await _calc_air_quality_score(session)
         scores["traffic"] = await _calc_traffic_score(session)
         scores["official_warning"] = await _calc_warning_score(session)
@@ -93,6 +93,8 @@ async def check_thresholds_and_alert(scores: dict):
 
 
 async def _calc_water_score(session) -> dict:
+    from app.collectors.water.pegel_collector import classify_water_level
+
     cutoff = datetime.utcnow() - timedelta(hours=2)
     stmt = (
         select(WaterLevel)
@@ -103,33 +105,68 @@ async def _calc_water_score(session) -> dict:
     levels = result.scalars().all()
 
     if not levels:
-        return {"score": 0, "weight": 1.5, "detail": "Keine Daten", "stations": []}
+        return {"score": 0, "weight": 1.5, "detail": "Keine Daten", "stations": [], "drought_indicator": 0}
 
     max_score = 0
+    drought_indicator = 0
+    low_water_stations = 0
     station_data = []
+
     for level in levels:
         station_score = 0
-        if level.trend == "rising":
-            station_score += 10
+        classification = classify_water_level(level.level_cm, level.river or "")
+        condition = classification["condition"]
 
-        if level.level_cm and level.river:
-            river = level.river.lower()
-            if "rhein" in river and level.level_cm > 600:
-                station_score += min(60, (level.level_cm - 600) / 5)
-            elif "sieg" in river and level.level_cm > 300:
-                station_score += min(70, (level.level_cm - 300) / 3)
-            elif level.level_cm > 200:
-                station_score += min(50, (level.level_cm - 200) / 3)
+        if condition == "extremhochwasser":
+            station_score = 100
+        elif condition == "starkes_hochwasser":
+            station_score = 70 + min(30, classification["deviation"] * 20)
+        elif condition == "hochwasser":
+            station_score = 40 + min(30, classification["deviation"] * 30)
+            if level.trend == "rising":
+                station_score += 15
+        elif condition == "drought":
+            station_score = 60 + min(40, classification["deviation"] * 40)
+            drought_indicator = max(drought_indicator, 1.0)
+            low_water_stations += 1
+        elif condition == "niedrigwasser":
+            station_score = 30 + min(30, classification["deviation"] * 30)
+            drought_indicator = max(drought_indicator, 0.6)
+            low_water_stations += 1
+        elif condition == "unterdurchschnittlich":
+            drought_indicator = max(drought_indicator, 0.2)
+        else:
+            if level.trend == "rising":
+                station_score += 10
 
         max_score = max(max_score, station_score)
         station_data.append({
             "station": level.station_name,
+            "river": level.river,
             "level": level.level_cm,
             "trend": level.trend,
+            "condition": condition,
+            "warning_level": classification["warning_level"],
             "score": station_score,
         })
 
-    return {"score": min(100, max_score), "weight": 1.5, "detail": "Pegelstände", "stations": station_data}
+    if low_water_stations > 1:
+        drought_indicator = min(1.0, drought_indicator * 1.2)
+
+    detail = "Pegelstände"
+    if drought_indicator >= 0.6:
+        detail = f"Niedrigwasser an {low_water_stations} Stationen - Dürregefahr"
+    elif drought_indicator > 0:
+        detail = "Pegelstände unterdurchschnittlich"
+
+    return {
+        "score": min(100, max_score),
+        "weight": 1.5,
+        "detail": detail,
+        "stations": station_data,
+        "drought_indicator": drought_indicator,
+        "low_water_stations": low_water_stations,
+    }
 
 
 async def _calc_weather_score(session) -> dict:
@@ -154,7 +191,7 @@ async def _calc_weather_score(session) -> dict:
     }
 
 
-async def _calc_fire_score(session) -> dict:
+async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
     cutoff = datetime.utcnow() - timedelta(hours=12)
     stmt = (
         select(FireRisk)
@@ -164,20 +201,37 @@ async def _calc_fire_score(session) -> dict:
     result = await session.execute(stmt)
     risks = result.scalars().all()
 
-    if not risks:
-        return {"score": 0, "weight": 1.0, "detail": "Keine Daten"}
+    if not risks and drought_indicator == 0:
+        return {"score": 0, "weight": 1.0, "detail": "Keine Daten", "drought_boost": 0}
 
-    max_index = max(r.risk_index or 0 for r in risks)
+    max_index = max((r.risk_index or 0 for r in risks), default=0)
     has_hotspots = any(r.satellite_hotspots for r in risks)
 
     score = max_index * 20
     if has_hotspots:
         score += 30
 
+    drought_boost = 0
+    if drought_indicator > 0:
+        drought_boost = drought_indicator * 25
+        score += drought_boost
+
+    details = []
+    if max_index > 0:
+        details.append(f"Index {max_index}/5")
+    if has_hotspots:
+        details.append("Hotspots!")
+    if drought_indicator >= 0.6:
+        details.append("Niedrigwasser/Dürre erhöht Risiko")
+    elif drought_indicator > 0:
+        details.append("Trockene Bedingungen")
+
     return {
         "score": min(100, score),
         "weight": 1.0,
-        "detail": f"Index {max_index}/5" + (" + Hotspots!" if has_hotspots else ""),
+        "detail": " + ".join(details) if details else "Keine Daten",
+        "drought_boost": drought_boost,
+        "drought_indicator": drought_indicator,
     }
 
 
@@ -289,6 +343,14 @@ async def seed_default_thresholds():
                 condition={"min_score": 40},
                 score_contribution=30,
                 notification_channels=["push", "telegram"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.WATER,
+                name="Niedrigwasser / Dürre",
+                condition={"min_score": 30, "type": "low_water"},
+                score_contribution=20,
+                notification_channels=["push"],
                 is_enabled=True,
             ),
             AlertThreshold(
