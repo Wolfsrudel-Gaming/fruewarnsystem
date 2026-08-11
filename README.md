@@ -2,6 +2,20 @@
 
 Echtzeit-Frühwarnsystem für das Deutsche Rote Kreuz Troisdorf. Erkennt eskalierende Lagen und warnt automatisch bei drohendem Einsatzbedarf.
 
+## Produktion
+
+- **Live-Dashboard**: https://riegel-troisdorf.de/fruelage
+- **Arbeitsbranch**: `claude/drk-troisdorf-early-warning-h4bdz3` (Auto-Deploy alle 60 s)
+- **Mobile App**: Flutter-App in [`mobile/`](mobile/) — Anbindung über den Sync-Link auf dem Dashboard
+
+## Dokumentation
+
+| Dokument | Inhalt |
+|---|---|
+| [`docs/ZUSAMMENARBEIT.md`](docs/ZUSAMMENARBEIT.md) | Workflow, Arbeitsteilung (Webseite ↔ App), Deployment, Commit-Regeln |
+| [`docs/API.md`](docs/API.md) | API-Referenz für die Mobile App: Endpunkte, Datenformate, WebSocket |
+| [`docs/design/`](docs/design/) | Design-Referenzen für das Dashboard |
+
 ## Features
 
 - **Hochwasser-Monitoring**: Pegelstände (Rhein, Sieg, Agger + Nebenbäche), adaptive Abfrageintervalle, Trend-Analyse
@@ -31,9 +45,9 @@ Echtzeit-Frühwarnsystem für das Deutsche Rote Kreuz Troisdorf. Erkennt eskalie
 ### Auto-Update
 
 Das System hält sich automatisch aktuell:
-- Dedizierter Auto-Update Container prüft alle 30 Minuten auf neue Commits
-- Automatischer Pull, Build und Neustart
-- Rollback bei fehlgeschlagenem Build
+- Dedizierter Auto-Update Container prüft alle 60 Sekunden auf neue Commits
+- Automatischer Pull, gezielter Rebuild/Neustart nur der betroffenen Services
+- Server-lokale Commits werden automatisch zurück nach GitHub gepusht
 - Health-Check nach Update
 - Benachrichtigung über ntfy.sh bei Updates
 
