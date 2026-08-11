@@ -39,6 +39,20 @@ wait_for_backend() {
     return 1
 }
 
+# Lokale Commits (Deployment-Fixes, Merges) nach GitHub pushen,
+# damit Claude Code immer den echten Stand sieht.
+# Schlaegt still fehl, solange der Deploy-Key nicht eingetragen ist.
+push_local_commits() {
+    local ahead
+    ahead=$(git rev-list --count "origin/$UPDATE_BRANCH..HEAD" 2>/dev/null || echo 0)
+    if [ "$ahead" -gt 0 ]; then
+        if git push --quiet origin "HEAD:$UPDATE_BRANCH" 2>/dev/null; then
+            log "$ahead lokale Commits nach GitHub gepusht"
+            notify "FWS: Server-Commits gepusht" "$ahead lokale Commits nach GitHub uebertragen" "default"
+        fi
+    fi
+}
+
 check_and_update() {
     cd "$REPO_DIR"
     local current_hash
@@ -55,6 +69,7 @@ check_and_update() {
     # Up to date, wenn alle Remote-Commits bereits enthalten sind
     # (lokale Deployment-Commits duerfen voraus sein)
     if git merge-base --is-ancestor "$remote_hash" "$current_hash" 2>/dev/null; then
+        push_local_commits
         return 0
     fi
 
