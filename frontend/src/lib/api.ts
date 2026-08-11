@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || '';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/fruelage';
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('fws_token') : null;
@@ -22,5 +22,5 @@ export function getWsUrl(): string {
   const wsBase = process.env.NEXT_PUBLIC_WS_URL;
   if (wsBase) return wsBase;
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws`;
+  return `${protocol}//${window.location.host}/fruelage/ws`;
 }

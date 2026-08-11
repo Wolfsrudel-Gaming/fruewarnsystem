@@ -6,14 +6,16 @@ services:
     container_name: fws-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8010:8000"
     environment:
       - FWS_DATABASE_URL=postgresql+asyncpg://fws:fws_secret@db:5432/fruewarnsystem
       - FWS_DATABASE_URL_SYNC=postgresql://fws:fws_secret@db:5432/fruewarnsystem
       - FWS_REDIS_URL=redis://redis:6379/0
-      - FWS_OLLAMA_URL=http://ollama:11434
+      - FWS_OLLAMA_URL=http://host.docker.internal:11434
     env_file:
       - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
@@ -38,19 +40,24 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_BASE_PATH: /fruelage
+        NEXT_PUBLIC_API_URL: /fruelage
+        NEXT_PUBLIC_WS_URL: wss://riegel-troisdorf.de/fruelage/ws
+        INTERNAL_API_URL: http://backend:8000
     container_name: fws-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3010:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
-      - NEXT_PUBLIC_WS_URL=ws://backend:8000/ws
+      - NEXT_PUBLIC_API_URL=/fruelage
+      - NEXT_PUBLIC_WS_URL=wss://riegel-troisdorf.de/fruelage/ws
     depends_on:
       - backend
     networks:
       - fws-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/fruelage"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -66,7 +73,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5435:5432"
     networks:
       - fws-network
     healthcheck:
@@ -80,7 +87,7 @@ services:
     container_name: fws-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -91,12 +98,13 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional: eigenes Ollama (Standard: Host-Ollama)
   ollama:
     image: ollama/ollama:latest
     container_name: fws-ollama
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11435:11434"
     volumes:
       - ollama_data:/root/.ollama
     networks:
@@ -105,14 +113,15 @@ services:
       resources:
         limits:
           memory: 8G
+    profiles: ["with-ollama"]
 
+  # Interner Nginx nur lokal (Host-Nginx macht /fruelage)
   nginx:
     image: nginx:alpine
     container_name: fws-nginx
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:8088:80"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./docker/nginx/ssl:/etc/nginx/ssl:ro
@@ -128,7 +137,7 @@ services:
     container_name: fws-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9091:9090"
     volumes:
       - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -140,7 +149,7 @@ services:
     container_name: fws-grafana
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3011:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
@@ -153,7 +162,7 @@ services:
     container_name: fws-uptime
     restart: unless-stopped
     ports:
-      - "3002:3001"
+      - "127.0.0.1:3012:3001"
     volumes:
       - uptime_data:/app/data
     networks:
@@ -168,7 +177,7 @@ services:
     environment:
       - REPO_DIR=/repo
       - COMPOSE_FILE=/repo/docker-compose.yml
-      - UPDATE_BRANCH=main
+      - UPDATE_BRANCH=claude/drk-troisdorf-early-warning-h4bdz3
       - CHECK_INTERVAL=1800
       - NTFY_TOPIC=${FWS_NTFY_TOPIC:-drk-troisdorf-fws}
       - NTFY_SERVER=${FWS_NTFY_SERVER:-https://ntfy.sh}
@@ -177,13 +186,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - fws-network
+    profiles: ["with-autoupdate"]
 
   mqtt:
     image: eclipse-mosquitto:2
     container_name: fws-mqtt
     restart: unless-stopped
     ports:
-      - "1883:1883"
+      - "127.0.0.1:1884:1883"
     volumes:
       - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mqtt_data:/mosquitto/data
