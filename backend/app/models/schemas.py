@@ -39,6 +39,7 @@ class WaterLevel(Base):
     timestamp = Column(DateTime, nullable=False)
     source = Column(String(100))
     raw_data = Column(JSONB, nullable=True)
+    classification = Column(JSONB, nullable=True)  # von classify_water_level (Duerre/Hochwasser)
     created_at = Column(DateTime, default=func.now())
 
     __table_args__ = (
