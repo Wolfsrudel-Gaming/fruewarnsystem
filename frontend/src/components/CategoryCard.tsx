@@ -4,56 +4,50 @@ interface CategoryCardProps {
   title: string;
   icon: string;
   score: number;
-  detail: string;
+  detail?: string;
   onClick?: () => void;
 }
 
 function getScoreColor(score: number): string {
-  if (score < 20) return 'text-green-400';
-  if (score < 40) return 'text-yellow-400';
-  if (score < 60) return 'text-orange-400';
-  if (score < 80) return 'text-red-400';
-  return 'text-purple-400';
+  if (score < 20) return '#22c55e';
+  if (score < 40) return '#eab308';
+  if (score < 60) return '#f97316';
+  if (score < 80) return '#ef4444';
+  return '#a855f7';
 }
 
-function getScoreBg(score: number): string {
-  if (score < 20) return 'bg-green-500/10 border-green-500/30';
-  if (score < 40) return 'bg-yellow-500/10 border-yellow-500/30';
-  if (score < 60) return 'bg-orange-500/10 border-orange-500/30';
-  if (score < 80) return 'bg-red-500/10 border-red-500/30';
-  return 'bg-purple-500/10 border-purple-500/30';
-}
-
-function getScoreBar(score: number): string {
-  if (score < 20) return 'bg-green-500';
-  if (score < 40) return 'bg-yellow-500';
-  if (score < 60) return 'bg-orange-500';
-  if (score < 80) return 'bg-red-500';
-  return 'bg-purple-500';
+function hexToRgb(hex: string): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
 }
 
 export default function CategoryCard({ title, icon, score, detail, onClick }: CategoryCardProps) {
+  const color = getScoreColor(score);
+  const rgb = hexToRgb(color);
+
   return (
     <button
       onClick={onClick}
-      className={`w-full p-4 rounded-lg border transition-all hover:scale-[1.02] ${getScoreBg(score)} ${score >= 70 ? 'alert-glow' : ''}`}
+      className={`cat-card w-full ${score >= 60 ? 'glow' : ''}`}
+      style={{ background: `rgba(${rgb},.08)`, border: `1px solid rgba(${rgb},.25)` }}
+      title={detail}
     >
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">{icon}</span>
-          <span className="font-medium text-dark-200">{title}</span>
-        </div>
-        <span className={`text-2xl font-bold ${getScoreColor(score)}`}>
-          {Math.round(score)}
-        </span>
+      <div style={{ fontSize: 28, marginBottom: 8 }}>{icon}</div>
+      <div className="mono" style={{ fontSize: 29, fontWeight: 700, color, marginBottom: 6 }}>
+        {Math.round(score)}
       </div>
-      <div className="w-full bg-dark-800 rounded-full h-2 mb-2">
+      <div className="track" style={{ height: 4, marginBottom: 9 }}>
         <div
-          className={`h-2 rounded-full transition-all duration-1000 ${getScoreBar(score)}`}
-          style={{ width: `${Math.min(100, score)}%` }}
+          style={{
+            height: '100%',
+            width: `${Math.min(100, Math.max(0, score))}%`,
+            background: color,
+            borderRadius: 2,
+            transition: 'width 1s ease',
+          }}
         />
       </div>
-      <p className="text-xs text-dark-400 text-left">{detail}</p>
+      <div style={{ fontSize: 11, fontWeight: 600, color: '#ccc' }}>{title}</div>
     </button>
   );
 }

@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="de"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRK Troisdorf · Frühwarnsystem</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; background:#0a0a0a; color:#e7e7e7; padding:24px;
+         font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  a, a:hover { color:#e81e1e; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace; }
+  .card { background:linear-gradient(135deg,#151515 0%,#1a1a1a 100%); border-radius:20px;
+          border:1px solid #252525; padding:32px; }
+  .lbl { font-size:11px; font-weight:700; letter-spacing:3px; text-transform:uppercase; color:#666; }
+  .head { display:flex; align-items:center; gap:10px; margin-bottom:24px; }
+  .wrap { max-width:1400px; margin:0 auto; }
+  .grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px; }
+
+  /* ---- Pegelsäulen ---- */
+  .bars { display:flex; gap:20px; align-items:flex-end; height:250px; }
+  .bar { flex:1; display:flex; flex-direction:column; align-items:center; gap:7px; height:100%; }
+  .tube { flex:1; width:100%; position:relative; background:#1a1a1a; border-radius:12px;
+          overflow:hidden; border:1px solid #2a2a2a; }
+  .mark { position:absolute; left:0; right:0; height:1px; z-index:2; }
+  .fill { position:absolute; bottom:0; left:0; right:0;
+          transition:height 2s cubic-bezier(.4,0,.2,1), background 1s ease; }
+  .wave { position:absolute; top:-6px; left:-100%; width:300%; height:12px; overflow:hidden; }
+  .wave svg { width:100%; height:12px; animation:waveMove 3s linear infinite; }
+  .val { position:absolute; inset:0; display:flex; flex-direction:column;
+         align-items:center; justify-content:center; z-index:3; }
+  .num { font-size:21px; font-weight:700; color:#fff; text-shadow:0 2px 10px rgba(0,0,0,.9); }
+  .unit { font-size:11px; color:rgba(255,255,255,.72); }
+  .cond { font-size:10px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; }
+  .trend { font-size:15px; font-weight:700; line-height:1; }
+  .sname { font-size:11px; font-weight:600; color:#aaa; }
+  .sriver { font-size:10px; color:#555; }
+
+  /* ---- Segmente / Balken ---- */
+  .seg { flex:1; height:34px; border-radius:6px; transition:all 1s ease; }
+  /* Unbeleuchtete Stufen brauchen eine sichtbare Spur, sonst fehlt der Skala
+     der Nenner — als 34px-Block reicht #1c1c1c gegen die Karte nicht. */
+  .seg-off { background:#2a2a2a; border:1px solid #333; }
+  /* Zahlenreihe spiegelt die Segmentstruktur, damit jede Zahl unter ihrer Stufe sitzt. */
+  .seg-labels { display:flex; gap:6px; margin-top:14px; }
+  .seg-labels span { flex:1; text-align:center; font-size:10px; color:#777; }
+  .track { background:#1c1c1c; border-radius:3px; overflow:hidden; }
+  .cat { border-radius:16px; padding:20px 16px; text-align:center;
+         transition:transform .2s, box-shadow .2s; }
+  .cat:hover { transform:scale(1.04); box-shadow:0 8px 24px rgba(0,0,0,.35); }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; margin-top:18px; padding-top:16px;
+            border-top:1px solid #222; font-size:10px; color:#777; }
+  .legend span { display:flex; align-items:center; gap:5px; }
+  .dot { width:8px; height:8px; border-radius:2px; }
+
+  @keyframes breathe   { 0%,100%{opacity:.35} 50%{opacity:1} }
+  @keyframes slideIn   { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:none} }
+  @keyframes waveMove  { 0%{transform:translateX(0)} 100%{transform:translateX(-50%)} }
+  @keyframes highGlow  { 0%,100%{box-shadow:0 0 6px rgba(239,68,68,.3)}  50%{box-shadow:0 0 26px rgba(239,68,68,.75)} }
+  @keyframes lowGlow   { 0%,100%{box-shadow:0 0 6px rgba(217,119,6,.3)}  50%{box-shadow:0 0 26px rgba(217,119,6,.7)} }
+  .glow     { animation:highGlow 2s ease-in-out infinite; }
+  .glow-low { animation:lowGlow 2s ease-in-out infinite; }
+  .pulse    { animation:breathe 2s ease-in-out infinite; }
+
+  @media (max-width:1100px){
+    .grid { grid-template-columns:1fr; }
+    .span2,.span3 { grid-column:auto !important; }
+    .cats { grid-template-columns:repeat(3,1fr) !important; }
+  }
+</style>
+</head>
+<body>
+
+
+
+<div class="wrap" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;animation:slideIn .6s ease-out">
+  <div style="display:flex;align-items:center;gap:16px">
+    <div style="width:48px;height:48px;background:#e81e1e;border-radius:12px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:24px;color:#fff;box-shadow:0 0 30px rgba(232,30,30,.4)">✚</div>
+    <div>
+      <div style="font-size:22px;font-weight:800;letter-spacing:-.5px">DRK Troisdorf</div>
+      <div style="font-size:13px;color:#888;font-weight:500;letter-spacing:2px;text-transform:uppercase">Frühwarnsystem</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <div class="pulse" style="width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 12px #22c55e"></div>
+    <span style="font-size:12px;color:#888;font-weight:600;letter-spacing:1px">LIVE</span>
+    <span class="mono" id="clock" style="font-size:12px;color:#666;margin-left:6px">–:–:–</span>
+  </div>
+</div>
+
+<div class="wrap grid">
+
+  <!-- Gesamtrisiko -->
+  <div class="card" style="display:flex;flex-direction:column;align-items:center;justify-content:center;animation:slideIn .6s ease-out .1s both">
+    <div class="lbl" style="margin-bottom:24px">Gesamtrisiko</div>
+    <svg width="200" height="120" viewBox="0 0 200 120">
+      <path d="M 12 100 A 80 80 0 0 1 188 100" fill="none" stroke="#1e1e1e" stroke-width="12" stroke-linecap="round"></path>
+      <path id="gaugeArc" d="M 12 100 A 80 80 0 0 1 188 100" fill="none" stroke="#eab308" stroke-width="12" stroke-linecap="round" stroke-dasharray="62.8 251.3" style="filter:drop-shadow(0 0 12px #eab308);transition:stroke-dasharray 1.5s cubic-bezier(.4,0,.2,1),stroke .8s ease"></path>
+      <text id="gaugeNum" class="mono" x="100" y="88" text-anchor="middle" fill="#eab308" style="font-size:44px;font-weight:800">25</text>
+    </svg>
+    <div id="riskLabel" style="font-size:14px;font-weight:700;margin-top:16px;letter-spacing:1.5px;color:#eab308">ERHÖHT</div>
+  </div>
+
+  <!-- Pegelstände -->
+  <div class="card span2" style="grid-column:2/4;animation:slideIn .6s ease-out .2s both">
+    <div class="head"><span style="font-size:24px">🌊</span><div class="lbl">Pegelstände</div></div>
+    <div class="bars">
+
+      <!-- Köln · Rhein · niedrigwasser (142 cm, low_warning 150) -->
+      <div class="bar" data-station="Köln" data-river="Rhein" data-level="142" data-trend="falling" data-low-extreme="80" data-low-warn="150" data-low-normal="200" data-normal="600" data-warn="700" data-max="850">
+        <div class="tube glow-low">
+          <div class="mark" style="bottom:90.9%;background:#a855f7;opacity:.45"></div>
+          <div class="mark" style="bottom:74.9%;background:#ef4444;opacity:.45"></div>
+          <div class="mark" style="bottom:64.2%;background:#f97316;opacity:.4"></div>
+          <div class="mark" style="bottom:16.0%;background:#d97706;opacity:.5"></div>
+          <div class="fill" style="height:15.2%;background:linear-gradient(to top,#d97706ee,#d9770677);box-shadow:0 -4px 22px #d9770655">
+            <div class="wave"><svg viewBox="0 0 600 12" preserveAspectRatio="none" style="animation-duration:2.4s"><path d="M0 6Q25 0 50 6Q75 12 100 6Q125 0 150 6Q175 12 200 6Q225 0 250 6Q275 12 300 6Q325 0 350 6Q375 12 400 6Q425 0 450 6Q475 12 500 6Q525 0 550 6Q575 12 600 6" fill="none" stroke="#d97706" stroke-width="2.5" opacity=".7"></path></svg></div>
+          </div>
+          <div class="val"><div class="num mono">142</div><div class="unit mono">cm</div></div>
+        </div>
+        <div class="cond" style="color:#d97706">Niedrigwasser</div>
+        <div class="trend" style="color:#ef4444">▼</div>
+        <div class="sname">Köln</div>
+        <div class="sriver mono">Rhein</div>
+      </div>
+
+      <!-- Bonn · Rhein · normal (485 cm, high_normal 600) -->
+      <div class="bar" data-station="Bonn" data-river="Rhein" data-level="485" data-trend="rising" data-low-extreme="80" data-low-warn="150" data-low-normal="200" data-normal="600" data-warn="700" data-max="850">
+        <div class="tube">
+          <div class="mark" style="bottom:90.9%;background:#a855f7;opacity:.45"></div>
+          <div class="mark" style="bottom:74.9%;background:#ef4444;opacity:.45"></div>
+          <div class="mark" style="bottom:64.2%;background:#f97316;opacity:.4"></div>
+          <div class="mark" style="bottom:16.0%;background:#d97706;opacity:.5"></div>
+          <div class="fill" style="height:51.9%;background:linear-gradient(to top,#3b82f6ee,#3b82f677);box-shadow:0 -4px 22px #3b82f655">
+            <div class="wave"><svg viewBox="0 0 600 12" preserveAspectRatio="none" style="animation-duration:2.85s"><path d="M0 6Q25 0 50 6Q75 12 100 6Q125 0 150 6Q175 12 200 6Q225 0 250 6Q275 12 300 6Q325 0 350 6Q375 12 400 6Q425 0 450 6Q475 12 500 6Q525 0 550 6Q575 12 600 6" fill="none" stroke="#3b82f6" stroke-width="2.5" opacity=".7"></path></svg></div>
+          </div>
+          <div class="val"><div class="num mono">485</div><div class="unit mono">cm</div></div>
+        </div>
+        <div class="cond" style="color:#3b82f6">Normal</div>
+        <div class="trend" style="color:#777">▲</div>
+        <div class="sname">Bonn</div>
+        <div class="sriver mono">Rhein</div>
+      </div>
+
+      <!-- Siegburg · Sieg · starkes Hochwasser (428 cm, high_warning 400) -->
+      <div class="bar" data-station="Siegburg" data-river="Sieg" data-level="428" data-trend="rising" data-low-extreme="15" data-low-warn="30" data-low-normal="50" data-normal="300" data-warn="400" data-max="500">
+        <div class="tube glow">
+          <div class="mark" style="bottom:90.9%;background:#a855f7;opacity:.45"></div>
+          <div class="mark" style="bottom:72.7%;background:#ef4444;opacity:.45"></div>
+          <div class="mark" style="bottom:54.5%;background:#f97316;opacity:.4"></div>
+          <div class="mark" style="bottom:5.5%;background:#d97706;opacity:.5"></div>
+          <div class="fill" style="height:77.8%;background:linear-gradient(to top,#ef4444ee,#ef444477);box-shadow:0 -4px 22px #ef444455">
+            <div class="wave"><svg viewBox="0 0 600 12" preserveAspectRatio="none" style="animation-duration:1.7s"><path d="M0 6Q25 0 50 6Q75 12 100 6Q125 0 150 6Q175 12 200 6Q225 0 250 6Q275 12 300 6Q325 0 350 6Q375 12 400 6Q425 0 450 6Q475 12 500 6Q525 0 550 6Q575 12 600 6" fill="none" stroke="#ef4444" stroke-width="2.5" opacity=".7"></path></svg></div>
+          </div>
+          <div class="val"><div class="num mono">428</div><div class="unit mono">cm</div></div>
+        </div>
+        <div class="cond" style="color:#ef4444">Starkes Hochwasser</div>
+        <div class="trend" style="color:#ef4444">▲</div>
+        <div class="sname">Siegburg</div>
+        <div class="sriver mono">Sieg</div>
+      </div>
+
+      <!-- Troisdorf · Agger · hochwasser (232 cm, high_normal 200) -->
+      <div class="bar" data-station="Troisdorf" data-river="Agger" data-level="232" data-trend="rising" data-low-extreme="10" data-low-warn="20" data-low-normal="35" data-normal="200" data-warn="280" data-max="350">
+        <div class="tube">
+          <div class="mark" style="bottom:90.9%;background:#a855f7;opacity:.45"></div>
+          <div class="mark" style="bottom:72.7%;background:#ef4444;opacity:.45"></div>
+          <div class="mark" style="bottom:51.9%;background:#f97316;opacity:.4"></div>
+          <div class="mark" style="bottom:5.2%;background:#d97706;opacity:.5"></div>
+          <div class="fill" style="height:60.3%;background:linear-gradient(to top,#f97316ee,#f9731677);box-shadow:0 -4px 22px #f9731655">
+            <div class="wave"><svg viewBox="0 0 600 12" preserveAspectRatio="none" style="animation-duration:2.1s"><path d="M0 6Q25 0 50 6Q75 12 100 6Q125 0 150 6Q175 12 200 6Q225 0 250 6Q275 12 300 6Q325 0 350 6Q375 12 400 6Q425 0 450 6Q475 12 500 6Q525 0 550 6Q575 12 600 6" fill="none" stroke="#f97316" stroke-width="2.5" opacity=".7"></path></svg></div>
+          </div>
+          <div class="val"><div class="num mono">232</div><div class="unit mono">cm</div></div>
+        </div>
+        <div class="cond" style="color:#f97316">Hochwasser</div>
+        <div class="trend" style="color:#ef4444">▲</div>
+        <div class="sname">Troisdorf</div>
+        <div class="sriver mono">Agger</div>
+      </div>
+
+    </div>
+
+    <div class="legend">
+      <span><i class="dot" style="background:#92400e"></i>Trockenheit</span>
+      <span><i class="dot" style="background:#d97706"></i>Niedrigwasser</span>
+      <span><i class="dot" style="background:#64748b"></i>Unterdurchschnittlich</span>
+      <span><i class="dot" style="background:#3b82f6"></i>Normal</span>
+      <span><i class="dot" style="background:#f97316"></i>Hochwasser</span>
+      <span><i class="dot" style="background:#ef4444"></i>Starkes Hochwasser</span>
+      <span><i class="dot" style="background:#a855f7"></i>Extremhochwasser</span>
+    </div>
+  </div>
+
+  <!-- Waldbrandgefahr -->
+  <div class="card" style="animation:slideIn .6s ease-out .3s both">
+    <div class="head"><span style="font-size:24px">🔥</span><div class="lbl">Waldbrandgefahr</div></div>
+    <div style="display:flex;gap:6px">
+      <div class="seg" style="background:#22c55e;box-shadow:0 0 18px #22c55e55"></div>
+      <div class="seg pulse" style="background:#eab308;box-shadow:0 0 18px #eab30855"></div>
+      <div class="seg seg-off"></div>
+      <div class="seg seg-off"></div>
+      <div class="seg seg-off"></div>
+    </div>
+    <div class="seg-labels mono">
+      <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+    </div>
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid #252525">
+      <div style="font-size:12px;color:#888;margin-bottom:4px">Wahner Heide · DWD-Index</div>
+      <div style="font-size:16px;font-weight:700;color:#eab308">Stufe 2 · Gering</div>
+    </div>
+  </div>
+
+  <!-- Wetterwarnungen -->
+  <div class="card" style="animation:slideIn .6s ease-out .4s both">
+    <div class="head"><span style="font-size:24px">⛈️</span><div class="lbl">Wetterwarnungen</div></div>
+    <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid #1e1e1e">
+      <div class="pulse" style="width:10px;height:10px;border-radius:50%;background:#f97316;box-shadow:0 0 10px #f97316;flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">Starkregen möglich</div>
+        <div class="mono" style="font-size:11px;color:#666">Rhein-Sieg-Kreis</div>
+      </div>
+      <div class="mono" style="font-size:17px;font-weight:700;color:#f97316">55</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;padding:11px 0">
+      <div class="pulse" style="width:10px;height:10px;border-radius:50%;background:#eab308;box-shadow:0 0 10px #eab308;flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600">Windböen bis 70 km/h</div>
+        <div class="mono" style="font-size:11px;color:#666">Troisdorf / Siegburg</div>
+      </div>
+      <div class="mono" style="font-size:17px;font-weight:700;color:#eab308">40</div>
+    </div>
+  </div>
+
+  <!-- Luftqualität -->
+  <div class="card" style="animation:slideIn .6s ease-out .5s both">
+    <div class="head"><span style="font-size:24px">💨</span><div class="lbl">Luftqualität</div></div>
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;color:#aaa">PM 2.5</span>
+        <span class="mono" style="font-size:12px;font-weight:600;color:#22c55e">18 µg/m³</span>
+      </div>
+      <div class="track" style="height:6px"><div style="height:100%;width:36%;background:#22c55e;border-radius:3px"></div></div>
+    </div>
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;color:#aaa">PM 10</span>
+        <span class="mono" style="font-size:12px;font-weight:600;color:#22c55e">32 µg/m³</span>
+      </div>
+      <div class="track" style="height:6px"><div style="height:100%;width:40%;background:#22c55e;border-radius:3px"></div></div>
+    </div>
+    <div style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;color:#aaa">Ozon</span>
+        <span class="mono" style="font-size:12px;font-weight:600;color:#22c55e">45 µg/m³</span>
+      </div>
+      <div class="track" style="height:6px"><div style="height:100%;width:38%;background:#22c55e;border-radius:3px"></div></div>
+    </div>
+    <div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;color:#aaa">NO₂</span>
+        <span class="mono" style="font-size:12px;font-weight:600;color:#22c55e">28 µg/m³</span>
+      </div>
+      <div class="track" style="height:6px"><div style="height:100%;width:35%;background:#22c55e;border-radius:3px"></div></div>
+    </div>
+  </div>
+
+  <!-- Kategorien -->
+  <div class="span3 cats" style="grid-column:1/4;display:grid;grid-template-columns:repeat(7,1fr);gap:12px;animation:slideIn .6s ease-out .6s both">
+    <div class="cat glow" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25)">
+      <div style="font-size:28px;margin-bottom:8px">🌊</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#ef4444;margin-bottom:6px">68</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:68%;background:#ef4444;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">Hochwasser</div>
+    </div>
+    <div class="cat" style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.25)">
+      <div style="font-size:28px;margin-bottom:8px">⛈️</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#eab308;margin-bottom:6px">38</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:38%;background:#eab308;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">Wetter</div>
+    </div>
+    <div class="cat" style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25)">
+      <div style="font-size:28px;margin-bottom:8px">🔥</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#22c55e;margin-bottom:6px">15</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:15%;background:#22c55e;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">Waldbrand</div>
+    </div>
+    <div class="cat" style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25)">
+      <div style="font-size:28px;margin-bottom:8px">⚠️</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#22c55e;margin-bottom:6px">10</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:10%;background:#22c55e;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">Behörden</div>
+    </div>
+    <div class="cat" style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.25)">
+      <div style="font-size:28px;margin-bottom:8px">🚗</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#eab308;margin-bottom:6px">22</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:22%;background:#eab308;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">Verkehr</div>
+    </div>
+    <div class="cat" style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25)">
+      <div style="font-size:28px;margin-bottom:8px">💨</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#22c55e;margin-bottom:6px">12</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:12%;background:#22c55e;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">Luft</div>
+    </div>
+    <div class="cat" style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.25)">
+      <div style="font-size:28px;margin-bottom:8px">📰</div>
+      <div class="mono" style="font-size:29px;font-weight:700;color:#22c55e;margin-bottom:6px">8</div>
+      <div class="track" style="height:4px;margin-bottom:9px"><div style="height:100%;width:8%;background:#22c55e;border-radius:2px"></div></div>
+      <div style="font-size:11px;font-weight:600;color:#ccc">News</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* Bandlogik 1:1 nach classify_water_level() aus
+   backend/app/collectors/water/pegel_collector.py — sieben Zustände,
+   Niedrig- wie Hochwasser. */
+(function(){
+  try {
+    var clock = document.getElementById('clock');
+    function tick(){
+      if (clock) clock.textContent =
+        new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    }
+    tick(); setInterval(tick, 1000);
+
+    function thresholds(bar){
+      return {
+        lowExtreme: +bar.getAttribute('data-low-extreme'),
+        lowWarn:    +bar.getAttribute('data-low-warn'),
+        lowNormal:  +bar.getAttribute('data-low-normal'),
+        normal:     +bar.getAttribute('data-normal'),
+        warn:       +bar.getAttribute('data-warn'),
+        max:        +bar.getAttribute('data-max')
+      };
+    }
+
+    // Zustand nach classify_water_level(): unterste Grenze zuerst.
+    function classify(lvl, t){
+      if (lvl <= t.lowExtreme) return { key:'drought',        text:'Trockenheit',          color:'#92400e', side:'low'  };
+      if (lvl <= t.lowWarn)    return { key:'niedrigwasser',  text:'Niedrigwasser',        color:'#d97706', side:'low'  };
+      if (lvl <= t.lowNormal)  return { key:'below_normal',   text:'Unterdurchschnittlich',color:'#64748b', side:'low'  };
+      if (lvl <= t.normal)     return { key:'normal',         text:'Normal',               color:'#3b82f6', side:'mid'  };
+      if (lvl <= t.warn)       return { key:'hochwasser',     text:'Hochwasser',           color:'#f97316', side:'high' };
+      if (lvl <= t.max)        return { key:'starkes',        text:'Starkes Hochwasser',   color:'#ef4444', side:'high' };
+      return                          { key:'extrem',         text:'Extremhochwasser',     color:'#a855f7', side:'high' };
+    }
+
+    var bars = document.querySelectorAll('.bar');
+
+    // Referenzlinien aus den Schwellenwerten ableiten — gleiche Skala wie die Füllung.
+    for (var b=0;b<bars.length;b++){
+      var t = thresholds(bars[b]), denom = t.max*1.1;
+      var marks = bars[b].querySelectorAll('.mark');
+      var at = [t.max, t.warn, t.normal, t.lowWarn];
+      for (var m=0;m<marks.length && m<at.length;m++){
+        marks[m].style.bottom = ((at[m]/denom)*100).toFixed(1)+'%';
+      }
+    }
+
+    function paint(bar, lvl, drift){
+      var t = thresholds(bar), c = classify(lvl, t);
+      var pct = Math.min(94, Math.max(6, (lvl/(t.max*1.1))*100));
+
+      var fill = bar.querySelector('.fill');
+      fill.style.height = pct.toFixed(1)+'%';
+      fill.style.background = 'linear-gradient(to top,'+c.color+'ee,'+c.color+'77)';
+      fill.style.boxShadow = '0 -4px 22px '+c.color+'55';
+
+      var path = bar.querySelector('.wave path');
+      if (path) path.setAttribute('stroke', c.color);
+
+      // Kritische Zustände leuchten — hoch rot, niedrig amber.
+      var tube = bar.querySelector('.tube');
+      tube.classList.remove('glow','glow-low');
+      if (c.key==='starkes' || c.key==='extrem') tube.classList.add('glow');
+      else if (c.key==='drought' || c.key==='niedrigwasser') tube.classList.add('glow-low');
+
+      bar.querySelector('.num').textContent = lvl;
+
+      var cond = bar.querySelector('.cond');
+      cond.textContent = c.text;
+      cond.style.color = c.color;
+
+      // Pfeil zeigt, ob sich die Lage verschlechtert: auf der Niedrigseite
+      // ist Fallen schlecht, auf der Hochseite Steigen.
+      var tr = bar.querySelector('.trend');
+      tr.textContent = drift>0 ? '▲' : drift<0 ? '▼' : '■';
+      var worse = (c.side==='low' && drift<0) || (c.side==='high' && drift>0);
+      var better = (c.side==='low' && drift>0) || (c.side==='high' && drift<0);
+      tr.style.color = worse ? '#ef4444' : better ? '#22c55e' : '#777';
+    }
+
+    setInterval(function(){
+      for (var i=0;i<bars.length;i++){
+        var bar = bars[i], t = thresholds(bar);
+        var lvl = +bar.getAttribute('data-level');
+        var drift = Math.round((Math.random()-0.47) * (t.max*0.012));
+        lvl = Math.max(4, lvl + drift);
+        bar.setAttribute('data-level', lvl);
+        paint(bar, lvl, drift);
+      }
+    }, 3000);
+
+    // Gesamtrisiko = Mittel der Kategorie-Scores (dashboard.py: total / len)
+    (function(){
+      var nums = document.querySelectorAll('.cats .cat .mono');
+      if (!nums.length) return;
+      var sum = 0;
+      for (var i=0;i<nums.length;i++) sum += parseFloat(nums[i].textContent) || 0;
+      var s = Math.round(sum / nums.length);
+      var c = s<20?'#22c55e':s<40?'#eab308':s<60?'#f97316':s<80?'#ef4444':'#a855f7';
+      var txt = s<20?'NORMAL':s<40?'ERHÖHT':s<60?'HOCH':s<80?'SEHR HOCH':'EXTREM';
+      var circ = Math.PI*80;
+      var arc = document.getElementById('gaugeArc');
+      var num = document.getElementById('gaugeNum');
+      var lab = document.getElementById('riskLabel');
+      if (arc){
+        arc.setAttribute('stroke', c);
+        arc.setAttribute('stroke-dasharray', ((s/100)*circ).toFixed(1)+' '+circ.toFixed(1));
+        arc.style.filter = 'drop-shadow(0 0 12px '+c+')';
+      }
+      if (num){ num.textContent = s; num.setAttribute('fill', c); }
+      if (lab){ lab.textContent = txt; lab.style.color = c; }
+    })();
+  } catch(e) {
+    if (window.console) console.error('Live-Update deaktiviert:', e);
+  }
+})();
+</script>
+
+
+
+</body></html>
