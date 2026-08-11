@@ -40,7 +40,7 @@ export default function Dashboard() {
   const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number] | null>(null);
 
   const onWsMessage = useCallback((msg: any) => {
-    if (msg.type === 'update' && msg.scores) {
+    if ((msg.type === 'update' || msg.type === 'score_update') && msg.scores) {
       store.updateScores(msg.scores);
     }
   }, []);

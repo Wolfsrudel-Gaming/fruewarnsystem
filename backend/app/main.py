@@ -55,7 +55,7 @@ async def run_collector(name: str, func):
         result = await func()
         scores = await calculate_risk_scores()
         await check_thresholds_and_alert(scores)
-        await ws_manager.broadcast({"type": "update", "source": name, "scores": _serialize_scores(scores)})
+        await ws_manager.broadcast({"type": "score_update", "source": name, "scores": _serialize_scores(scores)})
     except Exception as e:
         logger.error(f"Collector {name} failed: {e}", exc_info=True)
 

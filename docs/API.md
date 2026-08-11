@@ -50,10 +50,32 @@ Geeignet für einen späteren QR-Code-/Deeplink-Pairing-Flow in der App.
 }
 ```
 
-Kategorien: `water`, `weather`, `fire`, `warnings`, `traffic`, `air_quality`, `news`
-(je nach Datenlage auch `seismic`, `radiation`, `health`).
-`components.contributions` enthält die Einzelbegründungen pro Score
-(`source`, `source_type`, `value`, `points`, `reason`, `timestamp`).
+**Kategorie-Schlüssel**: `risk_scores` enthält jede Kategorie unter **zwei Schlüsseln** —
+dem englischen Enum-Wert und dem deutschen Alias (identisches Objekt). Die App kann
+direkt die deutschen Schlüssel verwenden:
+
+| Deutsch (Alias) | Englisch (Enum) | Label |
+|---|---|---|
+| `hochwasser` | `water` | Hochwasser |
+| `wetter` | `weather` | Wetter |
+| `waldbrand` | `fire` | Waldbrand |
+| `verkehr` | `traffic` | Verkehr |
+| `luftqualitaet` | `air_quality` | Luftqualität |
+| `nachrichten` | `news` | Nachrichten |
+| `warnungen` | `official_warning` | Behördenwarnungen |
+| `erdbeben` | `seismic` | Erdbeben |
+| `strahlung` | `radiation` | Strahlung |
+| `gesundheit` | `health` | Gesundheit |
+| `strom` | `power` | Stromnetz |
+| `veranstaltungen` | `events` | Veranstaltungen |
+| `schifffahrt` | `shipping` | Schifffahrt |
+
+Jeder Score enthält zusätzlich `label` (deutscher Anzeigename). Alarme enthalten
+zusätzlich `category_label`. `components.contributions` enthält die Einzelbegründungen
+pro Score (`source`, `source_type`, `value`, `points`, `reason`, `timestamp`).
+
+Der Parameter `category` bei `/api/dashboard/history/risk-scores` akzeptiert
+ebenfalls beide Schreibweisen (z. B. `?category=hochwasser`).
 
 ### `GET /api/dashboard/water?hours=24` — Pegelstände
 
@@ -128,9 +150,35 @@ Antwort: `{ "status": "acknowledged", "id": 1 }` bzw. `{ "error": "Alert not fou
 | `GET /api/dashboard/warnings` | Behördenwarnungen (NINA etc.) |
 | `GET /api/dashboard/air-quality` | Luftqualität |
 | `GET /api/dashboard/thresholds` | Alarm-Schwellenwerte |
-| `GET /api/dashboard/history/risk-scores` | Score-Verlauf |
+| `GET /api/dashboard/history/risk-scores?category=hochwasser&hours=24` | Score-Verlauf (Kategorie optional, deutsche Aliasse ok) |
 | `GET /api/dashboard/scoring/live` | Live-Scoring mit allen Beiträgen |
 | `GET /api/system/status`, `GET /api/system/health` | Systemstatus |
+
+### Rohdaten-Endpunkte (alles, was der Server sammelt)
+
+`GET /api/dashboard/data` listet alle Datensätze mit Eintragszahl der letzten 7 Tage.
+`GET /api/dashboard/data/{dataset}?hours=168&limit=200` liefert die Rohdaten
+(alle Tabellenspalten, neueste zuerst; `include_raw=true` liefert zusätzlich `raw_data`).
+
+| Datensatz | Inhalt |
+|---|---|
+| `seismic` | Erdbeben (BGR/EMSC) |
+| `radiation` | Radioaktivität / ODL-Messnetz (BfS) |
+| `health` | Intensivbetten-Kapazität (DIVI) |
+| `power` | Stromnetz-Status |
+| `shipping` | Schifffahrts-Warnungen (ELWIS) |
+| `fuel` | Kraftstoff-Verfügbarkeit (Tankerkönig) |
+| `transit` | ÖPNV/Bahn-Störungen |
+| `lightning` | Blitzdaten |
+| `soil-moisture` | Bodenfeuchte |
+| `drought` | Dürremonitor |
+| `flood-warnings` | Hochwasser-Meldestufen |
+| `gdac` | GDACS Katastrophen-Alerts |
+| `events` | Veranstaltungskalender |
+
+Hinweis: Einige Quellen liefern derzeit keine Daten, weil die externen APIs
+umgezogen/defekt sind (DIVI, SMARD, ELWIS, KVB/VRS) — die Endpunkte existieren
+und liefern automatisch, sobald die Collector repariert sind.
 
 ## WebSocket (Live-Updates)
 
@@ -141,7 +189,7 @@ Basis-URL (`http`→`ws`, + `/ws`).
 - Der Server broadcastet nach jedem Collector-Lauf:
 
 ```json
-{ "type": "update", "source": "<collector-name>", "scores": { "<kategorie>": { "score": …, … } } }
+{ "type": "score_update", "source": "<collector-name>", "scores": { "<kategorie>": { "score": …, … } } }
 ```
 
 Nach einer `update`-Nachricht sollte die App die betroffenen Daten neu laden
@@ -155,3 +203,18 @@ Nach einer `update`-Nachricht sollte die App die betroffenen Daten neu laden
   - 30-Tage-Hitze/Trockenheit → Boost im Feuer- und Wetter-Score.
   - Niedrigwasser/Dürre → Boost im Feuer-Score.
 - `source_type: "cross_analysis"` kennzeichnet solche Querauswertungs-Beiträge.
+
+## Bekannte Punkte in der App (für Claude Code)
+
+1. **`FireRiskData.windDirection`**: Die App parst `wind_direction` als `String?`,
+   der Server liefert aber **Float** (Grad). Sobald das Feld befüllt ist, wirft
+   `fromJson` eine Exception — und weil `refreshAll()` alle Fetches in einem
+   `Future.wait` bündelt, reißt ein einzelner Parse-Fehler **alle** Daten mit
+   („Verbindung fehlgeschlagen"). Empfehlung: `(json['wind_direction'] as num?)?.toDouble()`
+   und die Fetches einzeln absichern.
+2. **`FireRiskData.satelliteHotspots`**: App erwartet `int?`, Server liefert **JSONB**
+   (Liste/Objekt der Hotspots). Empfehlung: als Liste parsen oder `length` verwenden.
+3. Kategorie-Schlüssel: erledigt — der Server liefert jetzt deutsche Aliasse
+   (siehe Tabelle oben), die App muss nichts ändern.
+4. WebSocket: erledigt — der Server sendet jetzt `type: "score_update"`,
+   wie von der App erwartet.

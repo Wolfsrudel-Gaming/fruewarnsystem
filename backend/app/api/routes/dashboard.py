@@ -1,7 +1,8 @@
+import enum
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy import select, and_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,9 +11,62 @@ from app.models.schemas import (
     WaterLevel, WeatherData, FireRisk, AirQuality, NewsItem,
     OfficialWarning, TrafficEvent, EventCalendar, Alert,
     RiskScore, AlertCategory, AlertThreshold, LightningData,
+    EarthquakeEvent,
+    RadiationReading,
+    ICUCapacity,
+    GridStatus,
+    RiverShippingWarning,
+    FuelStation,
+    TransitDisruption,
+    SoilMoisture,
+    DroughtData,
+    FloodWarningLevel,
+    GDACAlert,
 )
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+
+# Deutsche Kategorie-Aliasse (von der Mobile App verwendet) -> interne Enum-Werte
+CATEGORY_ALIASES = {
+    "hochwasser": "water",
+    "wetter": "weather",
+    "waldbrand": "fire",
+    "verkehr": "traffic",
+    "luftqualitaet": "air_quality",
+    "nachrichten": "news",
+    "warnungen": "official_warning",
+    "erdbeben": "seismic",
+    "strahlung": "radiation",
+    "gesundheit": "health",
+    "strom": "power",
+    "veranstaltungen": "events",
+    "schifffahrt": "shipping",
+}
+CATEGORY_LABELS = {
+    "water": "Hochwasser",
+    "weather": "Wetter",
+    "fire": "Waldbrand",
+    "traffic": "Verkehr",
+    "air_quality": "Luftqualität",
+    "news": "Nachrichten",
+    "official_warning": "Behördenwarnungen",
+    "seismic": "Erdbeben",
+    "radiation": "Strahlung",
+    "health": "Gesundheit",
+    "power": "Stromnetz",
+    "events": "Veranstaltungen",
+    "shipping": "Schifffahrt",
+    "manv": "MANV",
+    "custom": "Benutzerdefiniert",
+}
+# Umkehrung: englischer Key -> deutscher Alias
+CATEGORY_ALIASES_REVERSE = {v: k for k, v in CATEGORY_ALIASES.items()}
+
+
+def resolve_category(value: str) -> str:
+    """Akzeptiert deutsche Aliasse und englische Enum-Werte."""
+    return CATEGORY_ALIASES.get(value.lower().strip(), value)
 
 
 @router.get("/overview")
@@ -22,7 +76,7 @@ async def get_overview(db: AsyncSession = Depends(get_db)):
     risk_stmt = (
         select(RiskScore)
         .order_by(desc(RiskScore.calculated_at))
-        .limit(10)
+        .limit(50)
     )
     risk_result = await db.execute(risk_stmt)
     risk_scores = risk_result.scalars().all()
@@ -35,7 +89,14 @@ async def get_overview(db: AsyncSession = Depends(get_db)):
                 "score": r.score,
                 "components": r.components,
                 "calculated_at": r.calculated_at.isoformat() if r.calculated_at else None,
+                "label": CATEGORY_LABELS.get(cat, cat),
             }
+
+    # Deutsche Alias-Keys für die Mobile App (gleiche Objekte, keine Duplikat-Daten)
+    for cat in list(scores_by_cat.keys()):
+        alias = CATEGORY_ALIASES_REVERSE.get(cat)
+        if alias and alias not in scores_by_cat:
+            scores_by_cat[alias] = scores_by_cat[cat]
 
     alert_stmt = select(Alert).where(Alert.is_active == True).order_by(desc(Alert.score))
     alert_result = await db.execute(alert_stmt)
@@ -43,6 +104,7 @@ async def get_overview(db: AsyncSession = Depends(get_db)):
         {
             "id": a.id,
             "category": a.category.value,
+            "category_label": CATEGORY_LABELS.get(a.category.value, a.category.value),
             "score": a.score,
             "title": a.title,
             "description": a.description,
@@ -54,9 +116,10 @@ async def get_overview(db: AsyncSession = Depends(get_db)):
     ]
 
     overall = 0
-    if scores_by_cat:
-        total = sum(s["score"] for s in scores_by_cat.values())
-        overall = min(100, total / len(scores_by_cat))
+    canonical = {k: v for k, v in scores_by_cat.items() if k not in CATEGORY_ALIASES}
+    if canonical:
+        total = sum(s["score"] for s in canonical.values())
+        overall = min(100, total / len(canonical))
 
     return {
         "overall_score": overall,
@@ -351,6 +414,7 @@ async def get_alerts(
             {
                 "id": a.id,
                 "category": a.category.value,
+                "category_label": CATEGORY_LABELS.get(a.category.value, a.category.value),
                 "score": a.score,
                 "title": a.title,
                 "description": a.description,
@@ -432,7 +496,7 @@ async def get_risk_score_history(
     )
     if category:
         try:
-            cat_enum = AlertCategory(category)
+            cat_enum = AlertCategory(resolve_category(category))
             stmt = stmt.where(RiskScore.category == cat_enum)
         except ValueError:
             pass
@@ -529,4 +593,90 @@ async def get_scoring_breakdown_history(
             }
             for s in scores
         ]
+    }
+
+
+# ---------------------------------------------------------------------------
+# Generische Daten-Endpunkte: ALLES was der Server sammelt ist auch abrufbar.
+# ---------------------------------------------------------------------------
+
+DATASETS = {
+    "seismic": (EarthquakeEvent, "Erdbeben (BGR/EMSC)"),
+    "radiation": (RadiationReading, "Radioaktivität / ODL-Messnetz (BfS)"),
+    "health": (ICUCapacity, "Intensivbetten-Kapazität (DIVI)"),
+    "power": (GridStatus, "Stromnetz-Status"),
+    "shipping": (RiverShippingWarning, "Schifffahrts-Warnungen (ELWIS)"),
+    "fuel": (FuelStation, "Kraftstoff-Verfügbarkeit (Tankerkönig)"),
+    "transit": (TransitDisruption, "ÖPNV/Bahn-Störungen"),
+    "lightning": (LightningData, "Blitzdaten"),
+    "soil-moisture": (SoilMoisture, "Bodenfeuchte"),
+    "drought": (DroughtData, "Dürremonitor (UFZ)"),
+    "flood-warnings": (FloodWarningLevel, "Hochwasser-Meldestufen"),
+    "gdac": (GDACAlert, "GDACS Katastrophen-Alerts"),
+    "events": (EventCalendar, "Veranstaltungskalender"),
+}
+
+_EXCLUDED_COLUMNS = {"raw_data"}
+
+
+def _serialize_row(obj, include_raw: bool = False) -> dict:
+    """Alle Spalten einer Tabellenzeile JSON-tauglich serialisieren."""
+    out = {}
+    for col in obj.__table__.columns:
+        if not include_raw and col.name in _EXCLUDED_COLUMNS:
+            continue
+        val = getattr(obj, col.name)
+        if isinstance(val, datetime):
+            val = val.isoformat()
+        elif isinstance(val, enum.Enum):
+            val = val.value
+        out[col.name] = val
+    return out
+
+
+@router.get("/data")
+async def list_datasets(db: AsyncSession = Depends(get_db)):
+    """Alle zusätzlich verfügbaren Datensätze mit Anzahl der Einträge (letzte 7 Tage)."""
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    result = {}
+    for key, (model, label) in DATASETS.items():
+        stmt = select(func.count()).select_from(model)
+        if hasattr(model, "created_at"):
+            stmt = stmt.where(model.created_at > cutoff)
+        count = (await db.execute(stmt)).scalar() or 0
+        result[key] = {
+            "label": label,
+            "endpoint": f"/api/dashboard/data/{key}",
+            "entries_7d": count,
+        }
+    return {"datasets": result}
+
+
+@router.get("/data/{dataset}")
+async def get_dataset(
+    dataset: str,
+    hours: int = Query(168, ge=1, le=8760),
+    limit: int = Query(200, ge=1, le=2000),
+    include_raw: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rohdaten eines Datensatzes, neueste zuerst."""
+    if dataset not in DATASETS:
+        raise HTTPException(status_code=404, detail=f"Unbekannter Datensatz. Verfügbar: {sorted(DATASETS)}")
+    model, label = DATASETS[dataset]
+
+    stmt = select(model)
+    if hasattr(model, "created_at"):
+        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        stmt = stmt.where(model.created_at > cutoff).order_by(desc(model.created_at))
+    else:
+        stmt = stmt.order_by(desc(model.id))
+    stmt = stmt.limit(limit)
+
+    rows = (await db.execute(stmt)).scalars().all()
+    return {
+        "dataset": dataset,
+        "label": label,
+        "count": len(rows),
+        "items": [_serialize_row(r, include_raw=include_raw) for r in rows],
     }
