@@ -421,3 +421,83 @@ async def get_risk_score_history(
             for s in scores
         ]
     }
+
+
+@router.get("/scoring/live")
+async def get_live_scoring_breakdown():
+    from app.services.alert.alert_engine import calculate_risk_scores
+    scores = await calculate_risk_scores()
+
+    breakdown = {}
+    for cat, data in scores.items():
+        breakdown[cat] = {
+            "score": data.get("score", 0),
+            "weight": data.get("weight"),
+            "detail": data.get("detail"),
+            "contributions": data.get("contributions", []),
+        }
+
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "categories": breakdown,
+    }
+
+
+@router.get("/scoring/history/{score_id}")
+async def get_scoring_detail(score_id: int, db: AsyncSession = Depends(get_db)):
+    stmt = select(RiskScore).where(RiskScore.id == score_id)
+    result = await db.execute(stmt)
+    score = result.scalar_one_or_none()
+    if not score:
+        return {"error": "Score nicht gefunden"}
+
+    components = score.components or {}
+    return {
+        "id": score.id,
+        "category": score.category.value,
+        "score": score.score,
+        "calculated_at": score.calculated_at.isoformat() if score.calculated_at else None,
+        "detail": components.get("detail"),
+        "weight": components.get("weight"),
+        "contributions": components.get("contributions", []),
+        "raw_components": {k: v for k, v in components.items() if k not in ("contributions",)},
+    }
+
+
+@router.get("/scoring/history")
+async def get_scoring_breakdown_history(
+    category: Optional[str] = Query(None),
+    hours: int = Query(24, ge=1, le=168),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    stmt = (
+        select(RiskScore)
+        .where(RiskScore.calculated_at > cutoff)
+        .order_by(desc(RiskScore.calculated_at))
+        .limit(limit)
+    )
+    if category:
+        try:
+            cat_enum = AlertCategory(category)
+            stmt = stmt.where(RiskScore.category == cat_enum)
+        except ValueError:
+            return {"error": f"Unbekannte Kategorie: {category}"}
+
+    result = await db.execute(stmt)
+    scores = result.scalars().all()
+
+    return {
+        "entries": [
+            {
+                "id": s.id,
+                "category": s.category.value,
+                "score": s.score,
+                "calculated_at": s.calculated_at.isoformat() if s.calculated_at else None,
+                "detail": (s.components or {}).get("detail"),
+                "contributions": (s.components or {}).get("contributions", []),
+            }
+            for s in scores
+        ]
+    }

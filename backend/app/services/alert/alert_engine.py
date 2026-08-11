@@ -15,6 +15,19 @@ from app.models.schemas import (
 logger = logging.getLogger(__name__)
 
 
+def _contrib(source: str, source_type: str, value, points: float, reason: str, ts=None) -> dict:
+    entry = {
+        "source": source,
+        "source_type": source_type,
+        "value": value,
+        "points": round(points, 1),
+        "reason": reason,
+    }
+    if ts:
+        entry["timestamp"] = ts.isoformat() if isinstance(ts, datetime) else str(ts)
+    return entry
+
+
 async def calculate_risk_scores() -> dict:
     scores = {}
     async with async_session() as session:
@@ -30,7 +43,16 @@ async def calculate_risk_scores() -> dict:
         total_weight = sum(s.get("weight", 1.0) for s in scores.values())
         overall = total / total_weight if total_weight > 0 else 0
 
+        overall_contributions = []
         for cat_name, cat_data in scores.items():
+            w = cat_data.get("weight", 1.0)
+            overall_contributions.append(_contrib(
+                source=cat_name,
+                source_type="category_score",
+                value=cat_data["score"],
+                points=cat_data["score"] * w / total_weight if total_weight > 0 else 0,
+                reason=f"{cat_data['detail']} (Gewicht {w}x)",
+            ))
             try:
                 cat_enum = AlertCategory(cat_name)
             except ValueError:
@@ -44,7 +66,10 @@ async def calculate_risk_scores() -> dict:
 
         await session.commit()
 
-    scores["overall"] = {"score": min(100, overall), "components": scores}
+    scores["overall"] = {
+        "score": min(100, overall),
+        "contributions": overall_contributions,
+    }
     return scores
 
 
@@ -105,39 +130,60 @@ async def _calc_water_score(session) -> dict:
     levels = result.scalars().all()
 
     if not levels:
-        return {"score": 0, "weight": 1.5, "detail": "Keine Daten", "stations": [], "drought_indicator": 0}
+        return {"score": 0, "weight": 1.5, "detail": "Keine Daten", "stations": [],
+                "contributions": [], "drought_indicator": 0}
 
     max_score = 0
     drought_indicator = 0
     low_water_stations = 0
     station_data = []
+    contributions = []
 
     for level in levels:
         station_score = 0
         classification = classify_water_level(level.level_cm, level.river or "")
         condition = classification["condition"]
+        reasons = []
 
         if condition == "extremhochwasser":
             station_score = 100
+            reasons.append(f"Extremhochwasser bei {level.level_cm} cm")
         elif condition == "starkes_hochwasser":
             station_score = 70 + min(30, classification["deviation"] * 20)
+            reasons.append(f"Starkes Hochwasser bei {level.level_cm} cm")
         elif condition == "hochwasser":
             station_score = 40 + min(30, classification["deviation"] * 30)
+            reasons.append(f"Hochwasser bei {level.level_cm} cm")
             if level.trend == "rising":
                 station_score += 15
+                reasons.append("steigender Trend (+15)")
         elif condition == "drought":
             station_score = 60 + min(40, classification["deviation"] * 40)
             drought_indicator = max(drought_indicator, 1.0)
             low_water_stations += 1
+            reasons.append(f"Extrem-Niedrigwasser bei {level.level_cm} cm - Dürre")
         elif condition == "niedrigwasser":
             station_score = 30 + min(30, classification["deviation"] * 30)
             drought_indicator = max(drought_indicator, 0.6)
             low_water_stations += 1
+            reasons.append(f"Niedrigwasser bei {level.level_cm} cm")
         elif condition == "unterdurchschnittlich":
             drought_indicator = max(drought_indicator, 0.2)
+            reasons.append(f"Unterdurchschnittlich bei {level.level_cm} cm")
         else:
             if level.trend == "rising":
                 station_score += 10
+                reasons.append(f"Normalpegel {level.level_cm} cm, steigend (+10)")
+
+        if station_score > 0:
+            contributions.append(_contrib(
+                source=f"Pegelonline - {level.station_name or level.station_id}",
+                source_type="pegel",
+                value=f"{level.level_cm} cm ({level.river})",
+                points=station_score,
+                reason="; ".join(reasons),
+                ts=level.timestamp,
+            ))
 
         max_score = max(max_score, station_score)
         station_data.append({
@@ -152,6 +198,13 @@ async def _calc_water_score(session) -> dict:
 
     if low_water_stations > 1:
         drought_indicator = min(1.0, drought_indicator * 1.2)
+        contributions.append(_contrib(
+            source="Querauswertung Niedrigwasser",
+            source_type="cross_analysis",
+            value=f"{low_water_stations} Stationen",
+            points=0,
+            reason=f"Dürreindikator um 20% erhöht wegen {low_water_stations} betroffener Stationen",
+        ))
 
     detail = "Pegelstände"
     if drought_indicator >= 0.6:
@@ -164,6 +217,7 @@ async def _calc_water_score(session) -> dict:
         "weight": 1.5,
         "detail": detail,
         "stations": station_data,
+        "contributions": contributions,
         "drought_indicator": drought_indicator,
         "low_water_stations": low_water_stations,
     }
@@ -180,14 +234,27 @@ async def _calc_weather_score(session) -> dict:
     warnings = result.scalars().all()
 
     if not warnings:
-        return {"score": 0, "weight": 1.2, "detail": "Keine Warnungen", "warnings": []}
+        return {"score": 0, "weight": 1.2, "detail": "Keine Warnungen",
+                "warnings": [], "contributions": []}
 
     max_severity = max(w.severity for w in warnings)
+    contributions = []
+    for w in warnings:
+        contributions.append(_contrib(
+            source=f"DWD - {w.region or 'Unbekannt'}",
+            source_type="dwd_warning",
+            value=f"Severity {w.severity}",
+            points=w.severity,
+            reason=w.title or "Wetterwarnung",
+            ts=w.created_at,
+        ))
+
     return {
         "score": min(100, max_severity),
         "weight": 1.2,
         "detail": f"{len(warnings)} Wetterwarnungen",
         "warnings": [{"title": w.title, "severity": w.severity} for w in warnings[:5]],
+        "contributions": contributions,
     }
 
 
@@ -202,19 +269,45 @@ async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
     risks = result.scalars().all()
 
     if not risks and drought_indicator == 0:
-        return {"score": 0, "weight": 1.0, "detail": "Keine Daten", "drought_boost": 0}
+        return {"score": 0, "weight": 1.0, "detail": "Keine Daten",
+                "contributions": [], "drought_boost": 0}
 
     max_index = max((r.risk_index or 0 for r in risks), default=0)
     has_hotspots = any(r.satellite_hotspots for r in risks)
+    contributions = []
 
     score = max_index * 20
+    if max_index > 0:
+        contributions.append(_contrib(
+            source="DWD Waldbrandgefahrenindex",
+            source_type="dwd_fire_index",
+            value=f"Stufe {max_index}/5",
+            points=max_index * 20,
+            reason=f"Waldbrandgefahrenindex {max_index} von 5",
+        ))
+
     if has_hotspots:
         score += 30
+        hotspot_regions = [r.region for r in risks if r.satellite_hotspots]
+        contributions.append(_contrib(
+            source="NASA FIRMS Satellitendaten",
+            source_type="satellite",
+            value=f"Hotspots in {', '.join(hotspot_regions[:3])}",
+            points=30,
+            reason="Aktive Hitze-Anomalien per Satellit erkannt",
+        ))
 
     drought_boost = 0
     if drought_indicator > 0:
         drought_boost = drought_indicator * 25
         score += drought_boost
+        contributions.append(_contrib(
+            source="Pegelstände (Querauswertung)",
+            source_type="cross_analysis",
+            value=f"Dürreindikator {drought_indicator:.1f}",
+            points=drought_boost,
+            reason="Niedrige Pegelstände deuten auf Dürre hin → erhöhte Waldbrandgefahr",
+        ))
 
     details = []
     if max_index > 0:
@@ -230,6 +323,7 @@ async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
         "score": min(100, score),
         "weight": 1.0,
         "detail": " + ".join(details) if details else "Keine Daten",
+        "contributions": contributions,
         "drought_boost": drought_boost,
         "drought_indicator": drought_indicator,
     }
@@ -246,18 +340,41 @@ async def _calc_air_quality_score(session) -> dict:
     readings = result.scalars().all()
 
     if not readings:
-        return {"score": 0, "weight": 0.5, "detail": "Keine Daten"}
+        return {"score": 0, "weight": 0.5, "detail": "Keine Daten", "contributions": []}
 
     max_aqi = max((r.aqi or 0) for r in readings)
     pm25_max = max((r.pm25 or 0) for r in readings)
+    contributions = []
 
     score = 0
     if max_aqi > 100:
-        score = min(100, (max_aqi - 100) / 2)
-    if pm25_max > 50:
-        score = max(score, min(100, (pm25_max - 50) * 2))
+        aqi_score = min(100, (max_aqi - 100) / 2)
+        score = aqi_score
+        worst = max(readings, key=lambda r: r.aqi or 0)
+        contributions.append(_contrib(
+            source=f"{worst.source or 'Unbekannt'} - {worst.station_name or worst.station_id}",
+            source_type="air_quality",
+            value=f"AQI {max_aqi}",
+            points=aqi_score,
+            reason=f"AQI über 100 (Schwellenwert für ungesunde Luft)",
+            ts=worst.timestamp,
+        ))
 
-    return {"score": score, "weight": 0.5, "detail": f"AQI {max_aqi}"}
+    if pm25_max > 50:
+        pm_score = min(100, (pm25_max - 50) * 2)
+        if pm_score > score:
+            score = pm_score
+        worst_pm = max(readings, key=lambda r: r.pm25 or 0)
+        contributions.append(_contrib(
+            source=f"{worst_pm.source or 'Unbekannt'} - {worst_pm.station_name or worst_pm.station_id}",
+            source_type="air_quality",
+            value=f"PM2.5: {pm25_max} µg/m³",
+            points=pm_score,
+            reason=f"Feinstaub PM2.5 über 50 µg/m³",
+            ts=worst_pm.timestamp,
+        ))
+
+    return {"score": score, "weight": 0.5, "detail": f"AQI {max_aqi}", "contributions": contributions}
 
 
 async def _calc_traffic_score(session) -> dict:
@@ -270,19 +387,38 @@ async def _calc_traffic_score(session) -> dict:
     events = result.scalars().all()
 
     if not events:
-        return {"score": 0, "weight": 0.8, "detail": "Keine Ereignisse"}
+        return {"score": 0, "weight": 0.8, "detail": "Keine Ereignisse", "contributions": []}
 
     max_severity = max(e.severity for e in events)
     accident_count = sum(1 for e in events if e.event_type == "accident")
+    contributions = []
+
+    for e in sorted(events, key=lambda x: x.severity, reverse=True)[:10]:
+        contributions.append(_contrib(
+            source=f"Autobahn-API - {e.road or 'Unbekannt'}",
+            source_type="traffic",
+            value=f"{e.event_type} (Severity {e.severity})",
+            points=e.severity,
+            reason=e.title or f"{e.event_type} auf {e.road}",
+            ts=e.started_at or e.created_at,
+        ))
 
     score = max_severity
     if accident_count > 2:
         score += 20
+        contributions.append(_contrib(
+            source="Querauswertung Unfälle",
+            source_type="cross_analysis",
+            value=f"{accident_count} Unfälle",
+            points=20,
+            reason=f"Mehr als 2 aktive Unfälle gleichzeitig (+20)",
+        ))
 
     return {
         "score": min(100, score),
         "weight": 0.8,
         "detail": f"{len(events)} Ereignisse, {accident_count} Unfälle",
+        "contributions": contributions,
     }
 
 
@@ -292,18 +428,29 @@ async def _calc_warning_score(session) -> dict:
     warnings = result.scalars().all()
 
     if not warnings:
-        return {"score": 0, "weight": 2.0, "detail": "Keine Warnungen"}
+        return {"score": 0, "weight": 2.0, "detail": "Keine Warnungen", "contributions": []}
 
     severity_map = {"minor": 20, "moderate": 40, "severe": 70, "extreme": 100}
     max_score = 0
+    contributions = []
+
     for w in warnings:
         s = severity_map.get(w.severity.lower() if w.severity else "", 30)
         max_score = max(max_score, s)
+        contributions.append(_contrib(
+            source=f"{w.source_system or 'NINA'} - {w.area_description or 'Unbekannt'}",
+            source_type="official_warning",
+            value=f"Severity: {w.severity}",
+            points=s,
+            reason=w.headline or "Behördliche Warnung",
+            ts=w.effective,
+        ))
 
     return {
         "score": max_score,
         "weight": 2.0,
         "detail": f"{len(warnings)} aktive Warnungen",
+        "contributions": contributions,
     }
 
 
@@ -318,15 +465,38 @@ async def _calc_news_score(session) -> dict:
     news = result.scalars().all()
 
     if not news:
-        return {"score": 0, "weight": 0.6, "detail": "Keine relevanten Nachrichten"}
+        return {"score": 0, "weight": 0.6, "detail": "Keine relevanten Nachrichten", "contributions": []}
 
     max_relevance = max(n.relevance_score for n in news)
     score = max_relevance * 80
+    contributions = []
+
+    for n in news[:10]:
+        ai = n.ai_analysis or {}
+        article_points = n.relevance_score * 80
+        reason_parts = []
+        if ai.get("category"):
+            reason_parts.append(f"Kategorie: {ai['category']}")
+        if ai.get("escalation_potential") and ai["escalation_potential"] != "none":
+            reason_parts.append(f"Eskalation: {ai['escalation_potential']}")
+        if ai.get("drk_relevance"):
+            reason_parts.append(ai["drk_relevance"][:120])
+
+        method = "LLM+Keyword" if ai else "Keyword"
+        contributions.append(_contrib(
+            source=f"{n.source or 'Unbekannt'} ({method})",
+            source_type="news_rss",
+            value=f"Score {n.relevance_score:.2f}",
+            points=article_points,
+            reason="; ".join(reason_parts) if reason_parts else n.title[:100],
+            ts=n.published_at or n.created_at,
+        ))
 
     return {
         "score": min(100, score),
         "weight": 0.6,
         "detail": f"{len(news)} relevante Nachrichten",
+        "contributions": contributions,
     }
 
 
