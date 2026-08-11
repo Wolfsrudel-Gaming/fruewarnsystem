@@ -230,6 +230,7 @@ async def get_news(
                 "source": n.source,
                 "category": n.category,
                 "relevance_score": n.relevance_score,
+                "is_relevant": n.is_relevant,
                 "ai_analysis": n.ai_analysis,
                 "published_at": n.published_at.isoformat() if n.published_at else None,
                 "created_at": n.created_at.isoformat() if n.created_at else None,

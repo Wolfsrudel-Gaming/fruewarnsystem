@@ -9,6 +9,7 @@ import WaterLevelBars from '@/components/WaterLevelBars';
 import FireDangerCard from '@/components/FireDangerCard';
 import WeatherWarningsCard from '@/components/WeatherWarningsCard';
 import AirQualityCard from '@/components/AirQualityCard';
+import CategoryDetailModal from '@/components/CategoryDetailModal';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useDashboardStore } from '@/store/dashboard';
 import { apiFetch } from '@/lib/api';
@@ -35,6 +36,7 @@ function flat(rs: any): any {
 export default function Dashboard() {
   const store = useDashboardStore();
   const [, setRefreshKey] = useState(0);
+  const [selectedCategory, setSelectedCategory] = useState<(typeof CATEGORIES)[number] | null>(null);
 
   const onWsMessage = useCallback((msg: any) => {
     if (msg.type === 'update' && msg.scores) {
@@ -126,6 +128,7 @@ export default function Dashboard() {
                   icon={cat.icon}
                   score={data?.score ?? 0}
                   detail={data?.detail}
+                  onClick={() => setSelectedCategory(cat)}
                 />
               );
             })}
@@ -143,6 +146,14 @@ export default function Dashboard() {
             />
           </div>
         </div>
+
+        {selectedCategory && (
+          <CategoryDetailModal
+            category={selectedCategory}
+            riskData={flat(store.riskScores[selectedCategory.key])}
+            onClose={() => setSelectedCategory(null)}
+          />
+        )}
       </div>
     </div>
   );
