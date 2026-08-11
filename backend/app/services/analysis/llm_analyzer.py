@@ -21,15 +21,21 @@ Besondere Gebiete: Wahner Heide (Waldbrandgefahr), ICE-Strecke Köln-Frankfurt, 
 
 DRK-typische Einsatzszenarien:
 - Hochwasser / Überschwemmung (Sandsäcke, Evakuierung, Betreuung)
+- Niedrigwasser / Dürre (erhöhte Waldbrandgefahr, Trinkwasserversorgung, Fischsterben)
 - Unwetter / Sturm (Verletzte, Evakuierung, Notunterkünfte)
-- Waldbrand (Verpflegung Einsatzkräfte, Evakuierung)
+- Waldbrand (Verpflegung Einsatzkräfte, Evakuierung) - besonders bei Dürre/Niedrigwasser
 - Massenanfall von Verletzten (MANV) bei Unfällen oder Veranstaltungen
 - Großveranstaltungen (Sanitätsdienst)
 - Stromausfall / Infrastrukturausfall (Betreuung)
-- Hitzewelle (Versorgung, Trinkwasser)
+- Hitzewelle / Dürre (Versorgung, Trinkwasser, Kühlräume, vulnerable Gruppen)
+- Trinkwassernotstand (Wasserverteilung, mobile Versorgung)
 - Gefahrgutunfall
 - Bombenentschärfung (Evakuierung, Betreuung)
 - Bahnunglück / Schwere Verkehrsunfälle
+
+WICHTIG: Niedrige Pegelstände sind ebenso relevant wie Hochwasser!
+Niedrigwasser deutet auf Dürre hin → erhöhte Waldbrandgefahr (besonders Wahner Heide),
+mögliche Trinkwasserknappheit, Fischsterben, Einschränkungen der Schifffahrt.
 
 Antworte AUSSCHLIESSLICH mit validem JSON in exakt diesem Format:
 {
