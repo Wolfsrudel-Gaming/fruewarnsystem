@@ -18,6 +18,12 @@ class AlertCategory(str, enum.Enum):
     AIR_QUALITY = "air_quality"
     NEWS = "news"
     OFFICIAL_WARNING = "official_warning"
+    SEISMIC = "seismic"
+    RADIATION = "radiation"
+    HEALTH = "health"
+    POWER = "power"
+    EVENTS = "events"
+    SHIPPING = "shipping"
     CUSTOM = "custom"
 
 
@@ -265,7 +271,176 @@ class UpdateLog(Base):
     version_from = Column(String(50))
     version_to = Column(String(50))
     commit_hash = Column(String(40))
-    status = Column(String(20))  # checking, downloading, building, restarting, success, failed
+    status = Column(String(20))
     details = Column(Text, nullable=True)
     started_at = Column(DateTime, default=func.now())
     completed_at = Column(DateTime, nullable=True)
+
+
+class EarthquakeEvent(Base):
+    __tablename__ = "earthquake_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(200), unique=True)
+    magnitude = Column(Float)
+    depth_km = Column(Float, nullable=True)
+    lat = Column(Float, nullable=False)
+    lon = Column(Float, nullable=False)
+    location = Column(String(500))
+    region = Column(String(200))
+    event_time = Column(DateTime, nullable=False)
+    felt_reports = Column(Integer, nullable=True)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("ix_earthquake_time", "event_time"),
+    )
+
+
+class RadiationReading(Base):
+    __tablename__ = "radiation_readings"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    station_id = Column(String(50), index=True)
+    station_name = Column(String(200))
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    gamma_dose_rate = Column(Float)  # nSv/h
+    is_elevated = Column(Boolean, default=False)
+    timestamp = Column(DateTime, nullable=False)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class ICUCapacity(Base):
+    __tablename__ = "icu_capacity"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    region_id = Column(String(50), index=True)
+    region_name = Column(String(200))
+    beds_total = Column(Integer)
+    beds_occupied = Column(Integer)
+    beds_free = Column(Integer)
+    ventilator_occupied = Column(Integer, nullable=True)
+    ventilator_free = Column(Integer, nullable=True)
+    occupancy_rate = Column(Float)
+    timestamp = Column(DateTime, nullable=False)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class GridStatus(Base):
+    __tablename__ = "grid_status"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    region = Column(String(200))
+    generation_mw = Column(Float, nullable=True)
+    consumption_mw = Column(Float, nullable=True)
+    balance_mw = Column(Float, nullable=True)
+    renewable_share = Column(Float, nullable=True)
+    price_eur_mwh = Column(Float, nullable=True)
+    is_stressed = Column(Boolean, default=False)
+    stress_indicator = Column(String(200), nullable=True)
+    timestamp = Column(DateTime, nullable=False)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class RiverShippingWarning(Base):
+    __tablename__ = "river_shipping_warnings"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    warning_id = Column(String(200), unique=True)
+    river = Column(String(100))
+    section = Column(String(200), nullable=True)
+    warning_type = Column(String(100))
+    title = Column(String(500))
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    valid_from = Column(DateTime, nullable=True)
+    valid_to = Column(DateTime, nullable=True)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class FuelStation(Base):
+    __tablename__ = "fuel_stations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    station_id = Column(String(100), index=True)
+    name = Column(String(300))
+    lat = Column(Float)
+    lon = Column(Float)
+    diesel = Column(Float, nullable=True)
+    e5 = Column(Float, nullable=True)
+    e10 = Column(Float, nullable=True)
+    is_open = Column(Boolean, default=True)
+    timestamp = Column(DateTime, nullable=False)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class TransitDisruption(Base):
+    __tablename__ = "transit_disruptions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    disruption_id = Column(String(200), unique=True, nullable=True)
+    line = Column(String(100))
+    route = Column(String(500), nullable=True)
+    disruption_type = Column(String(50))
+    title = Column(String(500))
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    valid_from = Column(DateTime, nullable=True)
+    valid_to = Column(DateTime, nullable=True)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class DroughtData(Base):
+    __tablename__ = "drought_data"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    region = Column(String(200))
+    soil_moisture_index = Column(Float, nullable=True)
+    drought_class = Column(String(50), nullable=True)
+    topsoil_moisture = Column(Float, nullable=True)
+    deep_soil_moisture = Column(Float, nullable=True)
+    timestamp = Column(DateTime, nullable=False)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class FloodWarningLevel(Base):
+    __tablename__ = "flood_warning_levels"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    station_id = Column(String(100), index=True)
+    station_name = Column(String(200))
+    river = Column(String(100))
+    warning_level = Column(Integer)  # 0-4
+    level_cm = Column(Float, nullable=True)
+    trend = Column(String(20), nullable=True)
+    state = Column(String(50))
+    timestamp = Column(DateTime, nullable=False)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+
+class GDACAlert(Base):
+    __tablename__ = "gdac_alerts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(String(200), unique=True)
+    alert_type = Column(String(50))  # earthquake, flood, cyclone, volcano
+    title = Column(String(500))
+    description = Column(Text, nullable=True)
+    severity = Column(String(50))
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    country = Column(String(100), nullable=True)
+    distance_km = Column(Float, nullable=True)
+    event_time = Column(DateTime, nullable=True)
+    source = Column(String(100))
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())

@@ -13,11 +13,25 @@ from app.models.database import init_db
 from app.api.routes import dashboard, system, auth, webhooks, analysis
 from app.api.websocket.manager import ws_manager
 from app.collectors.water.pegel_collector import collect_water_levels
+from app.collectors.water.hochwasser_collector import collect_flood_warnings
+from app.collectors.water.drought_collector import collect_drought_data
 from app.collectors.weather.dwd_collector import collect_dwd_warnings, collect_dwd_forecast, collect_radar_data
+from app.collectors.weather.lightning_collector import collect_lightning
 from app.collectors.fire.fire_collector import collect_fire_risk
 from app.collectors.news.news_collector import collect_news
 from app.collectors.warnings.nina_collector import collect_official_warnings
+from app.collectors.warnings.feuerwehr_bonn_collector import collect_feuerwehr_bonn
+from app.collectors.warnings.gdacs_collector import collect_gdacs_alerts
 from app.collectors.traffic.traffic_collector import collect_traffic
+from app.collectors.traffic.nrw_traffic_collector import collect_nrw_traffic
+from app.collectors.seismic.earthquake_collector import collect_earthquakes
+from app.collectors.radiation.bfs_collector import collect_radiation
+from app.collectors.health.divi_collector import collect_icu_capacity
+from app.collectors.power.grid_collector import collect_grid_status
+from app.collectors.events.event_collector import collect_events
+from app.collectors.shipping.rhine_collector import collect_shipping_warnings
+from app.collectors.transit.vrs_collector import collect_transit_disruptions
+from app.collectors.fuel.tankerkoenig_collector import collect_fuel_prices
 from app.services.alert.alert_engine import calculate_risk_scores, check_thresholds_and_alert, seed_default_thresholds
 from app.services.notification.notifier import send_daily_report
 from app.services.auto_updater import updater
@@ -101,6 +115,34 @@ async def lifespan(app: FastAPI):
                       args=["news", collect_news], id="news", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_traffic,
                       args=["traffic", collect_traffic], id="traffic", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_traffic,
+                      args=["nrw_traffic", collect_nrw_traffic], id="nrw_traffic", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_earthquake,
+                      args=["earthquakes", collect_earthquakes], id="earthquakes", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_radiation,
+                      args=["radiation", collect_radiation], id="radiation", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_icu,
+                      args=["icu", collect_icu_capacity], id="icu", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_grid,
+                      args=["grid", collect_grid_status], id="grid", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_events,
+                      args=["events", collect_events], id="events", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_shipping,
+                      args=["shipping", collect_shipping_warnings], id="shipping", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_transit,
+                      args=["transit", collect_transit_disruptions], id="transit", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_fuel,
+                      args=["fuel", collect_fuel_prices], id="fuel", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_flood_warnings,
+                      args=["flood_warnings", collect_flood_warnings], id="flood_warnings", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_drought,
+                      args=["drought", collect_drought_data], id="drought", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_lightning,
+                      args=["lightning", collect_lightning], id="lightning", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_gdacs,
+                      args=["gdacs", collect_gdacs_alerts], id="gdacs", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_feuerwehr_bonn,
+                      args=["feuerwehr_bonn", collect_feuerwehr_bonn], id="feuerwehr_bonn", replace_existing=True)
 
     if settings.auto_update_enabled:
         scheduler.add_job(

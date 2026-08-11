@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     auto_update_repo_url: str = ""
     auto_update_restart_delay_seconds: int = 10
 
+    # Tankerkönig
+    tankerkoenig_api_key: Optional[str] = None
+
     # Collector intervals (seconds)
     interval_weather: int = 300
     interval_water_normal: int = 3600
@@ -86,6 +89,18 @@ class Settings(BaseSettings):
     interval_events: int = 3600
     interval_warnings: int = 120
     interval_air_quality: int = 1800
+    interval_earthquake: int = 300
+    interval_radiation: int = 1800
+    interval_icu: int = 3600
+    interval_grid: int = 900
+    interval_shipping: int = 1800
+    interval_transit: int = 600
+    interval_fuel: int = 1800
+    interval_drought: int = 21600
+    interval_gdacs: int = 600
+    interval_flood_warnings: int = 600
+    interval_lightning: int = 300
+    interval_feuerwehr_bonn: int = 120
 
     model_config = {"env_file": ".env", "env_prefix": "FWS_"}
 
