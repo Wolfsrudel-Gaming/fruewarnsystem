@@ -262,6 +262,20 @@ async def _calc_water_score(session) -> dict:
     }
 
 
+async def _get_climate_30d(session) -> dict:
+    """Neuester 30-Tage-Hitze/Trockenheits-Indikator (Open-Meteo), max. 24h alt."""
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    stmt = (
+        select(WeatherData)
+        .where(and_(WeatherData.data_type == "climate_30d", WeatherData.created_at > cutoff))
+        .order_by(WeatherData.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.scalars().first()
+    return row.parameters if row and row.parameters else {}
+
+
 async def _calc_weather_score(session) -> dict:
     cutoff = datetime.utcnow() - timedelta(hours=6)
     stmt = (
@@ -272,27 +286,51 @@ async def _calc_weather_score(session) -> dict:
     result = await session.execute(stmt)
     warnings = result.scalars().all()
 
-    if not warnings:
-        return {"score": 0, "weight": 1.2, "detail": "Keine Warnungen",
-                "warnings": [], "contributions": []}
+    climate = await _get_climate_30d(session)
+    heat_level = climate.get("heat_drought_level", 0)
+    heat_points = heat_level * 10  # 0-40
 
-    max_severity = max(w.severity for w in warnings)
     contributions = []
-    for w in warnings:
+    score = 0
+
+    if warnings:
+        max_severity = max(w.severity for w in warnings)
+        score = max_severity
+        for w in warnings:
+            contributions.append(_contrib(
+                source=f"DWD - {w.region or 'Unbekannt'}",
+                source_type="dwd_warning",
+                value=f"Severity {w.severity}",
+                points=w.severity,
+                reason=w.title or "Wetterwarnung",
+                ts=w.created_at,
+            ))
+
+    if heat_points > 0:
+        score += heat_points
         contributions.append(_contrib(
-            source=f"DWD - {w.region or 'Unbekannt'}",
-            source_type="dwd_warning",
-            value=f"Severity {w.severity}",
-            points=w.severity,
-            reason=w.title or "Wetterwarnung",
-            ts=w.created_at,
+            source="Open-Meteo 30-Tage-Rückblick",
+            source_type="climate_30d",
+            value=f"{climate.get('hot_days', 0)} Hitzetage, {climate.get('rain_sum_mm', '?')} mm Regen/30d",
+            points=heat_points,
+            reason=climate.get("summary", "Anhaltende Hitze/Trockenheit der letzten 30 Tage"),
         ))
 
+    details = []
+    if warnings:
+        details.append(f"{len(warnings)} Wetterwarnungen")
+    else:
+        details.append("Keine Warnungen")
+    if heat_level > 0:
+        details.append(f"30 Tage: {climate.get('heat_drought_label', '')} "
+                       f"({climate.get('hot_days', 0)} Hitzetage)")
+
     return {
-        "score": min(100, max_severity),
+        "score": min(100, score),
         "weight": 1.2,
-        "detail": f"{len(warnings)} Wetterwarnungen",
+        "detail": " · ".join(details),
         "warnings": [{"title": w.title, "severity": w.severity} for w in warnings[:5]],
+        "climate_30d": climate,
         "contributions": contributions,
     }
 
@@ -348,6 +386,20 @@ async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
             reason="Niedrige Pegelstände deuten auf Dürre hin → erhöhte Waldbrandgefahr",
         ))
 
+    climate = await _get_climate_30d(session)
+    heat_level = climate.get("heat_drought_level", 0)
+    heat_boost = heat_level * 7  # 0-28
+    if heat_boost > 0:
+        score += heat_boost
+        contributions.append(_contrib(
+            source="Open-Meteo 30-Tage-Rückblick",
+            source_type="climate_30d",
+            value=(f"{climate.get('hot_days', 0)} Hitzetage, "
+                   f"{climate.get('max_dry_streak', 0)} Tage Trockenphase"),
+            points=heat_boost,
+            reason=climate.get("summary", "Anhaltende Hitze/Trockenheit erhöht die Waldbrandgefahr"),
+        ))
+
     details = []
     if max_index > 0:
         details.append(f"Index {max_index}/5")
@@ -357,6 +409,8 @@ async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
         details.append("Niedrigwasser/Dürre erhöht Risiko")
     elif drought_indicator > 0:
         details.append("Trockene Bedingungen")
+    if heat_level >= 2:
+        details.append(f"30-Tage-Hitze: {climate.get('heat_drought_label', '')}")
 
     return {
         "score": min(100, score),
@@ -365,6 +419,8 @@ async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
         "contributions": contributions,
         "drought_boost": drought_boost,
         "drought_indicator": drought_indicator,
+        "heat_boost": heat_boost,
+        "climate_30d": climate,
     }
 
 

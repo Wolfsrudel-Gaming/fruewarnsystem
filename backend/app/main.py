@@ -20,6 +20,7 @@ from app.collectors.water.hochwasser_collector import collect_flood_warnings
 from app.collectors.water.drought_collector import collect_drought_data
 from app.collectors.weather.dwd_collector import collect_dwd_warnings, collect_dwd_forecast, collect_radar_data
 from app.collectors.weather.lightning_collector import collect_lightning
+from app.collectors.weather.openmeteo_collector import collect_openmeteo
 from app.collectors.fire.fire_collector import collect_fire_risk
 from app.collectors.news.news_collector import collect_news, analyze_news_backlog
 from app.collectors.warnings.nina_collector import collect_official_warnings
@@ -110,6 +111,8 @@ async def lifespan(app: FastAPI):
                       args=["forecast", collect_dwd_forecast], id="weather_forecast", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_weather,
                       args=["radar", collect_radar_data], id="radar", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_weather,
+                      args=["openmeteo", collect_openmeteo], id="openmeteo", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_water_normal,
                       args=["water", collect_water_levels], id="water", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_fire,

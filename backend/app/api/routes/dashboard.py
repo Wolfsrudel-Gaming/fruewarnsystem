@@ -178,6 +178,34 @@ async def get_fire_risk(db: AsyncSession = Depends(get_db)):
     }
 
 
+@router.get("/weather-forecast")
+async def get_weather_forecast(db: AsyncSession = Depends(get_db)):
+    """Aktuelles Wetter, 24h-Vorhersage und 30-Tage-Hitze/Trockenheits-Analyse."""
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+
+    async def latest(data_type: str):
+        stmt = (
+            select(WeatherData)
+            .where(WeatherData.data_type == data_type)
+            .where(WeatherData.source == "open_meteo")
+            .where(WeatherData.created_at > cutoff)
+            .order_by(desc(WeatherData.created_at))
+            .limit(1)
+        )
+        return (await db.execute(stmt)).scalars().first()
+
+    forecast = await latest("forecast")
+    climate = await latest("climate_30d")
+
+    return {
+        "current": (forecast.parameters or {}).get("current") if forecast else None,
+        "hourly_24h": (forecast.parameters or {}).get("hourly_24h") if forecast else None,
+        "climate_30d": climate.parameters if climate else None,
+        "climate_daily": climate.raw_data if climate else None,
+        "updated_at": forecast.created_at.isoformat() if forecast else None,
+    }
+
+
 @router.get("/air-quality")
 async def get_air_quality(db: AsyncSession = Depends(get_db)):
     cutoff = datetime.utcnow() - timedelta(hours=24)

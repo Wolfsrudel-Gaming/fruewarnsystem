@@ -7,7 +7,7 @@ import CategoryCard from '@/components/CategoryCard';
 import AlertList from '@/components/AlertList';
 import WaterLevelBars from '@/components/WaterLevelBars';
 import FireDangerCard from '@/components/FireDangerCard';
-import WeatherWarningsCard from '@/components/WeatherWarningsCard';
+import WeatherCard from '@/components/WeatherCard';
 import AirQualityCard from '@/components/AirQualityCard';
 import CategoryDetailModal from '@/components/CategoryDetailModal';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -96,13 +96,13 @@ export default function Dashboard() {
             <FireDangerCard riskData={fire} />
           </div>
 
-          {/* Wetterwarnungen */}
+          {/* Wetter */}
           <div className="card slide-in" style={{ animationDelay: '.4s' }}>
             <div className="card-head">
               <span style={{ fontSize: 24 }}>⛈️</span>
-              <div className="lbl">Wetterwarnungen</div>
+              <div className="lbl">Wetter</div>
             </div>
-            <WeatherWarningsCard riskData={weather} />
+            <WeatherCard riskData={weather} />
           </div>
 
           {/* Luftqualität */}
