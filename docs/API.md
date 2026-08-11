@@ -164,9 +164,9 @@ Antwort: `{ "status": "acknowledged", "id": 1 }` bzw. `{ "error": "Alert not fou
 |---|---|
 | `seismic` | Erdbeben (BGR/EMSC) |
 | `radiation` | Radioaktivität / ODL-Messnetz (BfS) |
-| `health` | Intensivbetten-Kapazität (DIVI) |
+| `health` | Intensivbetten-Kapazität (RKI) |
 | `power` | Stromnetz-Status |
-| `shipping` | Schifffahrts-Warnungen (ELWIS) |
+| `shipping` | Schifffahrts-Warnungen (PEGELONLINE) |
 | `fuel` | Kraftstoff-Verfügbarkeit (Tankerkönig) |
 | `transit` | ÖPNV/Bahn-Störungen |
 | `lightning` | Blitzdaten |
@@ -176,9 +176,10 @@ Antwort: `{ "status": "acknowledged", "id": 1 }` bzw. `{ "error": "Alert not fou
 | `gdac` | GDACS Katastrophen-Alerts |
 | `events` | Veranstaltungskalender |
 
-Hinweis: Einige Quellen liefern derzeit keine Daten, weil die externen APIs
-umgezogen/defekt sind (DIVI, SMARD, ELWIS, KVB/VRS) — die Endpunkte existieren
-und liefern automatisch, sobald die Collector repariert sind.
+Quellen (Stand 2026-08): Intensivregister über RKI-GitHub-CSV, Strom über SMARD
+(Filter 4359/410), Schifffahrt über PEGELONLINE (GlW/HSW Bonn/Köln), ÖPNV über
+KVB-Betriebslage + VRR-ADDINFO, Hochwasser-Meldestufen über OpenHygon (LANUV)
++ PEGELONLINE Rhein.
 
 ## WebSocket (Live-Updates)
 

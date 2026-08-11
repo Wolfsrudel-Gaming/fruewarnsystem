@@ -1,5 +1,10 @@
+"""Schifffahrtsrelevante Rheinlagemeldungen über PEGELONLINE (GlW/HSW).
+
+ELWIS-RSS/NtS ist tot; als belastbarer Ersatz dienen Wasserstände vs.
+Gleichwert (GlW) und höchster Schifffahrtswasserstand (HSW) an den
+Rheinpegeln Bonn/Köln.
+"""
 import logging
-import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Optional
 
@@ -11,132 +16,136 @@ from app.models.schemas import RiverShippingWarning
 
 logger = logging.getLogger(__name__)
 
-ELWIS_RHEIN_RSS = "https://www.elwis.de/DE/dynamisch/nif/rss/nif_rss.php?region=RHEIN"
-ELWIS_MOSEL_RSS = "https://www.elwis.de/DE/dynamisch/nif/rss/nif_rss.php?region=MOSEL"
+# PEGELONLINE Stations-UUIDs
+STATIONS = {
+    "Bonn": "593647aa-9fea-43ec-a7d6-6476a76ae868",
+    "Köln": "a6ee8177-107b-47dd-bcfd-30960ccc6e9c",
+}
 
+PEGELONLINE = "https://www.pegelonline.wsv.de/webservices/rest-api/v2/stations"
 REQUEST_TIMEOUT = 30
 
 
 async def collect_shipping_warnings():
-    logger.info("Collecting Rhine shipping warnings...")
+    logger.info("Collecting Rhine shipping warnings (PEGELONLINE)...")
     all_warnings = []
 
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-        for url, river in [(ELWIS_RHEIN_RSS, "Rhein"), (ELWIS_MOSEL_RSS, "Mosel")]:
-            warnings = await _fetch_rss(client, url, river)
-            all_warnings.extend(warnings)
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+        for name, uuid in STATIONS.items():
+            w = await _fetch_station(client, name, uuid)
+            all_warnings.extend(w)
 
     new_count = 0
     async with async_session() as session:
-        existing_ids_result = await session.execute(
-            select(RiverShippingWarning.warning_id).where(
-                RiverShippingWarning.warning_id.in_([w["warning_id"] for w in all_warnings])
+        if all_warnings:
+            existing = await session.execute(
+                select(RiverShippingWarning.warning_id).where(
+                    RiverShippingWarning.warning_id.in_([w["warning_id"] for w in all_warnings])
+                )
             )
-        )
-        existing_ids = {row[0] for row in existing_ids_result}
+            existing_ids = {row[0] for row in existing}
+        else:
+            existing_ids = set()
 
         for data in all_warnings:
             if data["warning_id"] not in existing_ids:
-                entry = RiverShippingWarning(**data)
-                session.add(entry)
+                session.add(RiverShippingWarning(**data))
                 new_count += 1
-                if "sperrung" in data["title"].lower() or "hochwasser" in data["title"].lower():
-                    logger.warning(f"SHIPPING: {data['title']} ({data['river']})")
+                if data["warning_type"] in ("closure", "high_water", "low_water"):
+                    logger.warning("SHIPPING: %s (%s)", data["title"], data["river"])
         await session.commit()
 
-    logger.info(f"Collected {len(all_warnings)} shipping warnings ({new_count} new)")
+    logger.info("Collected %s shipping warnings (%s new)", len(all_warnings), new_count)
     return all_warnings
 
 
-async def _fetch_rss(client: httpx.AsyncClient, url: str, river: str) -> list[dict]:
+async def _fetch_station(client: httpx.AsyncClient, name: str, uuid: str) -> list[dict]:
     results = []
     try:
-        resp = await client.get(url)
+        url = f"{PEGELONLINE}/{uuid}.json"
+        resp = await client.get(
+            url,
+            params={
+                "includeTimeseries": "true",
+                "includeCurrentMeasurement": "true",
+                "includeCharacteristicValues": "true",
+            },
+        )
         resp.raise_for_status()
+        data = resp.json()
 
-        root = ET.fromstring(resp.text)
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        w_ts = next((t for t in data.get("timeseries", []) if t.get("shortname") == "W"), None)
+        if not w_ts:
+            return results
 
-        items = root.findall(".//item")
-        if not items:
-            items = root.findall(".//entry", ns) or root.findall(".//{http://www.w3.org/2005/Atom}entry")
+        current = w_ts.get("currentMeasurement") or {}
+        level = current.get("value")
+        if level is None:
+            return results
 
-        for item in items:
-            title = _get_text(item, "title")
-            description = _get_text(item, "description") or _get_text(item, "summary", ns)
-            link = _get_text(item, "link") or _get_text(item, "guid")
-            pub_date = _get_text(item, "pubDate") or _get_text(item, "updated", ns)
+        chars = {c.get("shortname"): c.get("value") for c in w_ts.get("characteristicValues", [])}
+        glw = chars.get("GlW")
+        tuglw = chars.get("TuGLW")
+        hsw = chars.get("HSW") or chars.get("MHW")
+        timestamp = _parse_dt(current.get("timestamp")) or datetime.utcnow()
+        day = timestamp.strftime("%Y-%m-%d")
 
-            if not title:
-                continue
+        # Niedrigwasser: unter GlW → Einschränkung, deutlich darunter → kritisch
+        if glw is not None and level < glw:
+            severity = "low_water"
+            title = f"Niedrigwasser Rhein Pegel {name}: {level:.0f} cm (unter GlW {glw:.0f} cm)"
+            if tuglw is not None and level < tuglw * 0.6:
+                title = f"Kritisches Niedrigwasser Rhein Pegel {name}: {level:.0f} cm"
+            results.append(_warn(
+                warning_id=f"pegelonline_{uuid}_low_{day}",
+                section=name,
+                warning_type=severity,
+                title=title,
+                description=(
+                    f"Aktueller Wasserstand {level:.0f} cm. "
+                    f"Gleichwert (GlW) {glw:.0f} cm"
+                    + (f", TuGLW {tuglw:.0f} cm" if tuglw else "")
+                    + ". Schifffahrt kann eingeschränkt sein."
+                ),
+                valid_from=timestamp,
+                raw={"station": name, "uuid": uuid, "level": level, "chars": chars, "current": current},
+            ))
 
-            warning_id = f"elwis_{hash(f'{title}_{pub_date}')}"
-            if link:
-                warning_id = f"elwis_{link.split('/')[-1]}" if "/" in link else f"elwis_{hash(link)}"
+        # Hochwasser: über HSW/MHW
+        if hsw is not None and level >= hsw:
+            results.append(_warn(
+                warning_id=f"pegelonline_{uuid}_high_{day}",
+                section=name,
+                warning_type="high_water",
+                title=f"Hochwasser Rhein Pegel {name}: {level:.0f} cm (über HSW/MHW {hsw:.0f} cm)",
+                description=(
+                    f"Aktueller Wasserstand {level:.0f} cm liegt über dem "
+                    f"Schifffahrts-/Hochwasserrichtwert {hsw:.0f} cm."
+                ),
+                valid_from=timestamp,
+                raw={"station": name, "uuid": uuid, "level": level, "chars": chars, "current": current},
+            ))
 
-            warning_type = _classify_warning(title, description or "")
-            section = _extract_section(title, description or "")
-
-            results.append({
-                "warning_id": warning_id,
-                "river": river,
-                "section": section,
-                "warning_type": warning_type,
-                "title": title,
-                "description": description,
-                "is_active": True,
-                "valid_from": _parse_datetime(pub_date),
-                "valid_to": None,
-                "source": "elwis",
-                "raw_data": {"title": title, "description": description, "link": link, "pubDate": pub_date},
-            })
     except Exception as e:
-        logger.error(f"Error fetching ELWIS RSS for {river}: {e}")
+        logger.error("Error fetching PEGELONLINE shipping data for %s: %s", name, e)
     return results
 
 
-def _classify_warning(title: str, description: str) -> str:
-    text = f"{title} {description}".lower()
-    if "sperrung" in text:
-        return "closure"
-    if "hochwasser" in text or "hoch" in text:
-        return "high_water"
-    if "niedrigwasser" in text or "niedrig" in text:
-        return "low_water"
-    if "eis" in text:
-        return "ice"
-    if "baustelle" in text or "arbeit" in text:
-        return "construction"
-    return "general"
+def _warn(**kwargs) -> dict:
+    return {
+        "river": "Rhein",
+        "is_active": True,
+        "valid_to": None,
+        "source": "pegelonline",
+        "raw_data": kwargs.pop("raw", None),
+        **kwargs,
+    }
 
 
-def _extract_section(title: str, description: str) -> Optional[str]:
-    text = f"{title} {description}"
-    markers = ["km ", "Km ", "KM ", "Rhein-km", "Mosel-km"]
-    for marker in markers:
-        idx = text.find(marker)
-        if idx != -1:
-            return text[max(0, idx - 20):idx + 30].strip()
-    return None
-
-
-def _get_text(element, tag: str, ns: dict = None) -> Optional[str]:
-    child = element.find(tag, ns) if ns else element.find(tag)
-    if child is not None and child.text:
-        return child.text.strip()
-    return None
-
-
-def _parse_datetime(value) -> Optional[datetime]:
+def _parse_dt(value) -> Optional[datetime]:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
     except (ValueError, TypeError):
-        pass
-    from email.utils import parsedate_to_datetime
-    try:
-        return parsedate_to_datetime(value).replace(tzinfo=None)
-    except Exception:
-        pass
-    return None
+        return None
