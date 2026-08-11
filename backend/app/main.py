@@ -2,8 +2,11 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -201,6 +204,15 @@ async def websocket_endpoint(websocket: WebSocket):
         await ws_manager.disconnect(websocket)
 
 
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
 @app.get("/")
 async def root():
+    index = STATIC_DIR / "index.html"
+    if index.exists():
+        return FileResponse(index)
     return {"name": settings.app_name, "version": settings.app_version, "status": "running"}
+
+
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
