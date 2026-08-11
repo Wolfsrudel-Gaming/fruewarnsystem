@@ -14,7 +14,7 @@ PEGELONLINE_BASE = "https://www.pegelonline.wsv.de/webservices/rest-api/v2"
 
 STATIONS = {
     "KOELN": {"uuid": "a6ee8177-107b-47dd-bcfd-30960ccc6e9c", "river": "Rhein"},
-    "BONN": {"uuid": "ecbe8429-93dd-4f07-8a2b-3e18b5c9a49a", "river": "Rhein"},
+    "BONN": {"uuid": "593647aa-9fea-43ec-a7d6-6476a76ae868", "river": "Rhein"},
     "SIEGBURG": {"uuid": None, "river": "Sieg", "search": "SIEGBURG"},
     "TROISDORF": {"uuid": None, "river": "Agger", "search": "TROISDORF"},
 }

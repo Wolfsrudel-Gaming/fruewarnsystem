@@ -91,9 +91,16 @@ async def check_thresholds_and_alert(scores: dict):
             if cat not in scores:
                 continue
 
-            current_score = scores[cat]["score"]
+            score_data = scores[cat]
+            current_score = score_data["score"]
             condition = threshold.condition or {}
             min_score = condition.get("min_score", 50)
+
+            required_type = condition.get("type")
+            if required_type:
+                actual_condition = score_data.get("primary_condition", "")
+                if required_type != actual_condition:
+                    continue
 
             if current_score >= min_score:
                 existing = await session.execute(
@@ -213,11 +220,33 @@ async def _calc_water_score(session) -> dict:
             reason=f"Dürreindikator um 20% erhöht wegen {low_water_stations} betroffener Stationen",
         ))
 
-    detail = "Pegelstände"
-    if drought_indicator >= 0.6:
-        detail = f"Niedrigwasser an {low_water_stations} Stationen - Dürregefahr"
-    elif drought_indicator > 0:
-        detail = "Pegelstände unterdurchschnittlich"
+    high_water_score = 0
+    low_water_score = 0
+    for sd in station_data:
+        cond = sd.get("condition", "")
+        s = sd.get("score", 0)
+        if cond in ("extremhochwasser", "starkes_hochwasser", "hochwasser"):
+            high_water_score = max(high_water_score, s)
+        elif cond in ("drought", "niedrigwasser", "unterdurchschnittlich"):
+            low_water_score = max(low_water_score, s)
+
+    if high_water_score >= low_water_score and high_water_score > 0:
+        primary_condition = "high_water"
+    elif low_water_score > 0:
+        primary_condition = "low_water"
+    else:
+        primary_condition = "normal"
+
+    detail = "Pegelstände normal"
+    if primary_condition == "low_water":
+        if drought_indicator >= 0.6:
+            detail = f"Niedrigwasser an {low_water_stations} Stationen - Dürregefahr"
+        elif drought_indicator > 0:
+            detail = "Pegelstände unterdurchschnittlich"
+        else:
+            detail = "Niedrigwasser"
+    elif primary_condition == "high_water":
+        detail = "Hochwasser"
 
     return {
         "score": min(100, max_score),
@@ -227,6 +256,9 @@ async def _calc_water_score(session) -> dict:
         "contributions": contributions,
         "drought_indicator": drought_indicator,
         "low_water_stations": low_water_stations,
+        "primary_condition": primary_condition,
+        "high_water_score": high_water_score,
+        "low_water_score": low_water_score,
     }
 
 
@@ -775,7 +807,7 @@ async def seed_default_thresholds():
             AlertThreshold(
                 category=AlertCategory.WATER,
                 name="Hochwasser-Warnung",
-                condition={"min_score": 40},
+                condition={"min_score": 40, "type": "high_water"},
                 score_contribution=30,
                 notification_channels=["push", "telegram"],
                 is_enabled=True,
