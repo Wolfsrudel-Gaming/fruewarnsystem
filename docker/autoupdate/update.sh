@@ -7,6 +7,14 @@ UPDATE_BRANCH="${UPDATE_BRANCH:-main}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-60}"
 NTFY_TOPIC="${NTFY_TOPIC:-}"
 NTFY_SERVER="${NTFY_SERVER:-https://ntfy.sh}"
+# KRITISCH: Ohne festen Projektnamen nimmt Compose den Ordnernamen (/repo -> "repo")
+# und versucht neue Container zu erzeugen -> Name-Konflikt mit laufenden fws-* Containern.
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-fruewarnsystem}"
+export COMPOSE_PROJECT_NAME
+
+dc() {
+    docker compose -p "$COMPOSE_PROJECT_NAME" -f "$COMPOSE_FILE" "$@"
+}
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -33,15 +41,17 @@ wait_for_backend() {
         if curl -sf http://fws-backend:8000/api/system/health > /dev/null 2>&1; then
             return 0
         fi
+        # Fallback: Host-Port falls Netzwerk-DNS im Moment nicht greift
+        if curl -sf http://172.17.0.1:8010/api/system/health > /dev/null 2>&1; then
+            return 0
+        fi
         sleep 5
         waited=$((waited + 5))
     done
     return 1
 }
 
-# Lokale Commits (Deployment-Fixes, Merges) nach GitHub pushen,
-# damit Claude Code immer den echten Stand sieht.
-# Schlaegt still fehl, solange der Deploy-Key nicht eingetragen ist.
+# Lokale Commits nach GitHub pushen (Deploy-Key noetig)
 push_local_commits() {
     local ahead
     ahead=$(git rev-list --count "origin/$UPDATE_BRANCH..HEAD" 2>/dev/null || echo 0)
@@ -50,6 +60,38 @@ push_local_commits() {
             log "$ahead lokale Commits nach GitHub gepusht"
             notify "FWS: Server-Commits gepusht" "$ahead lokale Commits nach GitHub uebertragen" "default"
         fi
+    fi
+}
+
+apply_services() {
+    local diff_files="$1"
+
+    # Bestehende Stack-Services anwenden (kein neuer Projektname!)
+    if ! dc --profile with-autoupdate up -d --remove-orphans 2>&1; then
+        log "WARN: compose up fehlgeschlagen, versuche gezielte Restarts..."
+    fi
+
+    # Frontend: Code ist im Image -> immer neu deployen wenn frontend/ geaendert
+    if echo "$diff_files" | grep -qE '^frontend/|^docker-compose\.yml'; then
+        log "Frontend neu deployen..."
+        dc up -d --no-deps --force-recreate frontend 2>&1 || true
+    fi
+
+    # Backend: Volume-Mount -> Restart reicht fuer Code; Image-Rebuild bei Dockerfile/requirements
+    if echo "$diff_files" | grep -qE '^backend/|^docker-compose\.yml'; then
+        log "Backend neu starten..."
+        dc up -d --no-deps --force-recreate backend 2>&1 || dc restart backend 2>&1 || true
+    fi
+
+    if echo "$diff_files" | grep -q '^docker/nginx/'; then
+        log "Nginx neu starten..."
+        dc restart nginx 2>&1 || true
+    fi
+    if echo "$diff_files" | grep -q '^docker/prometheus/'; then
+        dc restart prometheus 2>&1 || true
+    fi
+    if echo "$diff_files" | grep -q '^docker/mosquitto/'; then
+        dc restart mqtt 2>&1 || true
     fi
 }
 
@@ -66,8 +108,6 @@ check_and_update() {
     local remote_hash
     remote_hash=$(git rev-parse "origin/$UPDATE_BRANCH" 2>/dev/null || echo "unknown")
 
-    # Up to date, wenn alle Remote-Commits bereits enthalten sind
-    # (lokale Deployment-Commits duerfen voraus sein)
     if git merge-base --is-ancestor "$remote_hash" "$current_hash" 2>/dev/null; then
         push_local_commits
         return 0
@@ -85,9 +125,9 @@ check_and_update() {
 
     log "Pulling changes..."
     if ! git pull --no-edit origin "$UPDATE_BRANCH" 2>&1; then
-        log "ERROR: git pull failed (Konflikt mit lokalen Deployment-Commits?)"
+        log "ERROR: git pull failed"
         notify "FWS Update FEHLGESCHLAGEN" \
-            "Git pull fehlgeschlagen (Merge-Konflikt?). Manuell pruefen: /opt/fruewarnsystem" "high"
+            "Git pull fehlgeschlagen. Manuell pruefen: /opt/fruewarnsystem" "high"
         git merge --abort 2>/dev/null || true
         git reset --hard "$current_hash"
         return 1
@@ -95,71 +135,47 @@ check_and_update() {
 
     local new_hash
     new_hash=$(git rev-parse HEAD)
-
-    # Immer bauen: Docker-Cache macht das billig, wenn nichts Relevantes geaendert wurde.
-    # Noetig, weil Frontend-Code in das Image eingebacken wird.
-    log "Building containers..."
-    if ! docker compose -f "$COMPOSE_FILE" build --parallel backend frontend 2>&1 | tail -5; then
-        log "ERROR: Docker build failed, rolling back"
-        notify "FWS Update FEHLGESCHLAGEN" "Docker build fehlgeschlagen! Rollback auf ${current_hash:0:8}" "high"
-        git reset --hard "$current_hash"
-        docker compose -f "$COMPOSE_FILE" build --parallel backend frontend 2>&1 | tail -3 || true
-        return 1
-    fi
-
-    log "Applying services (up -d)..."
-    if ! docker compose -f "$COMPOSE_FILE" up -d 2>&1; then
-        log "ERROR: Service restart failed"
-        notify "FWS Update FEHLGESCHLAGEN" "Service-Neustart fehlgeschlagen!" "urgent"
-        return 1
-    fi
-
-    # Backend-Code ist als Volume gemountet: bei Aenderungen explizit neu starten
     local diff_files
     diff_files=$(git diff --name-only "$current_hash" "$new_hash")
-    if echo "$diff_files" | grep -q '^backend/'; then
-        log "Backend code changed, restarting backend..."
-        docker compose -f "$COMPOSE_FILE" restart backend 2>&1 || true
+
+    log "Building containers..."
+    if ! dc build --parallel backend frontend 2>&1 | tail -8; then
+        log "ERROR: Docker build failed, rolling back"
+        notify "FWS Update FEHLGESCHLAGEN" "Docker build fehlgeschlagen! Rollback" "high"
+        git reset --hard "$current_hash"
+        return 1
     fi
-    if echo "$diff_files" | grep -q '^docker/nginx/'; then
-        log "Nginx config changed, restarting internal nginx..."
-        docker compose -f "$COMPOSE_FILE" restart nginx 2>&1 || true
-    fi
-    if echo "$diff_files" | grep -q '^docker/prometheus/'; then
-        docker compose -f "$COMPOSE_FILE" restart prometheus 2>&1 || true
-    fi
-    if echo "$diff_files" | grep -q '^docker/mosquitto/'; then
-        docker compose -f "$COMPOSE_FILE" restart mqtt 2>&1 || true
-    fi
+
+    log "Applying services..."
+    apply_services "$diff_files"
 
     if wait_for_backend; then
         log "Update successful: ${current_hash:0:8} -> ${new_hash:0:8}"
         notify "FWS Update ERFOLGREICH" \
-            "${current_hash:0:8} -> ${new_hash:0:8}: ${change_count} Commits angewendet, alle Services gesund" \
-            "default"
+            "${current_hash:0:8} -> ${new_hash:0:8}: ${change_count} Commits live" "default"
     else
-        log "WARNING: Health check failed after update, keeping new version"
+        log "WARNING: Health check failed after update"
         notify "FWS Update angewendet, Health-Check FEHLGESCHLAGEN" \
-            "${current_hash:0:8} -> ${new_hash:0:8}: Backend antwortet nicht. Bitte manuell pruefen." \
-            "high"
+            "${current_hash:0:8} -> ${new_hash:0:8}: Backend antwortet nicht" "high"
     fi
 
-    # Zuletzt: eigenes Image aktualisieren, falls der Updater selbst geaendert wurde.
-    # Recreate beendet dieses Skript - der neue Container uebernimmt.
     if echo "$diff_files" | grep -q '^docker/autoupdate/'; then
-        log "Updater selbst geaendert, baue und ersetze fws-autoupdate..."
-        docker compose -f "$COMPOSE_FILE" --profile with-autoupdate build autoupdate 2>&1 | tail -3 || true
-        docker compose -f "$COMPOSE_FILE" --profile with-autoupdate up -d --no-deps autoupdate 2>&1 || true
+        log "Updater selbst geaendert, ersetze fws-autoupdate..."
+        dc --profile with-autoupdate build autoupdate 2>&1 | tail -3 || true
+        dc --profile with-autoupdate up -d --no-deps --force-recreate autoupdate 2>&1 || true
     fi
+
+    push_local_commits
 }
 
 log "=== DRK Fruehwarnsystem Auto-Updater ==="
 log "Repository: $REPO_DIR"
 log "Branch: $UPDATE_BRANCH"
+log "Project: $COMPOSE_PROJECT_NAME"
 log "Check interval: ${CHECK_INTERVAL}s"
 log "Notifications: ${NTFY_TOPIC:-disabled}"
 
-sleep 10
+sleep 5
 
 while true; do
     check_and_update || log "Update check encountered an error"
