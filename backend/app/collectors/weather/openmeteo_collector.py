@@ -62,6 +62,7 @@ async def collect_openmeteo():
     }
 
     indicators = _compute_climate_indicators(daily)
+    indicators.update(_compute_rain_indicators(daily, hourly_24h))
 
     forecast_row = WeatherData(
         data_type="forecast",
@@ -99,6 +100,24 @@ async def collect_openmeteo():
         f"{indicators['rain_sum_mm']}mm Regen"
     )
     return indicators
+
+
+def _compute_rain_indicators(daily: dict, hourly_24h: dict) -> dict:
+    """Regen als Überflutungs-Indikator: erwartete 24h-Menge und jüngster Rückblick."""
+    fc_rain = [r for r in hourly_24h.get("precipitation", []) if r is not None]
+    rain_next_24h = round(sum(fc_rain), 1)
+    max_hourly = round(max(fc_rain), 1) if fc_rain else 0.0
+
+    past_rain = [r for r in daily.get("precipitation_sum", [])[:HISTORY_DAYS] if r is not None]
+    rain_last_24h = round(past_rain[-1], 1) if past_rain else 0.0
+    rain_last_72h = round(sum(past_rain[-3:]), 1) if past_rain else 0.0
+
+    return {
+        "rain_next_24h_mm": rain_next_24h,
+        "max_hourly_rain_mm": max_hourly,
+        "rain_last_24h_mm": rain_last_24h,
+        "rain_last_72h_mm": rain_last_72h,
+    }
 
 
 def _compute_climate_indicators(daily: dict) -> dict:

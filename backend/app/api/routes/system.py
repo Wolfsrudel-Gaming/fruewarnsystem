@@ -12,6 +12,20 @@ from app.config import settings
 router = APIRouter(prefix="/api/system", tags=["system"])
 
 
+@router.get("/app-connect")
+async def get_app_connect():
+    """Verbindungsdaten für die Mobile App (Sync-Link)."""
+    base = settings.public_url.rstrip("/")
+    return {
+        "name": "DRK Troisdorf Frühwarnsystem",
+        "sync_url": base,
+        "api_url": f"{base}/api",
+        "ws_url": base.replace("https://", "wss://").replace("http://", "ws://") + "/ws",
+        "hint": "Diese URL in der App unter Einstellungen → Server-Verbindung eintragen.",
+    }
+
+
+
 @router.get("/status")
 async def system_status():
     return {

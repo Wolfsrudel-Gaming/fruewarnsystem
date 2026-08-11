@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # DWD
     dwd_station_id: str = "10513"  # MOSMIX-Station Köln/Bonn Flughafen
 
+    # Öffentliche Basis-URL (für App-Anbindung / Sync-Link)
+    public_url: str = "https://riegel-troisdorf.de/fruelage"
+
     # Pegel
     pegel_stations: str = "KOELN,BONN,TROISDORF,SIEGBURG"
 

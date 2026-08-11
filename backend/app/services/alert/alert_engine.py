@@ -237,6 +237,37 @@ async def _calc_water_score(session) -> dict:
     else:
         primary_condition = "normal"
 
+    # Regen-Querauswertung: erwarteter Starkregen ist ein Überflutungsindikator,
+    # besonders wenn er auf bereits erhöhte Pegel oder gesättigte Böden trifft.
+    climate = await _get_climate_30d(session)
+    rain_next_24h = climate.get("rain_next_24h_mm", 0) or 0
+    rain_last_72h = climate.get("rain_last_72h_mm", 0) or 0
+    flood_points = 0
+    flood_reasons = []
+    if rain_next_24h >= 40:
+        flood_points = 30
+        flood_reasons.append(f"Starkregen erwartet ({rain_next_24h} mm/24h)")
+    elif rain_next_24h >= 20:
+        flood_points = 18
+        flood_reasons.append(f"Ergiebiger Regen erwartet ({rain_next_24h} mm/24h)")
+    elif rain_next_24h >= 10:
+        flood_points = 8
+        flood_reasons.append(f"Regen erwartet ({rain_next_24h} mm/24h)")
+    if rain_last_72h >= 50:
+        flood_points += 15
+        flood_reasons.append(f"Böden gesättigt ({rain_last_72h} mm in 72h)")
+    if flood_points > 0 and primary_condition == "high_water":
+        flood_points = round(flood_points * 1.5)
+        flood_reasons.append("trifft auf bereits erhöhte Pegel (x1,5)")
+    if flood_points > 0:
+        contributions.append(_contrib(
+            source="Open-Meteo Regenprognose (Querauswertung)",
+            source_type="cross_analysis",
+            value=f"{rain_next_24h} mm/24h erwartet, {rain_last_72h} mm/72h gefallen",
+            points=flood_points,
+            reason="; ".join(flood_reasons),
+        ))
+
     detail = "Pegelstände normal"
     if primary_condition == "low_water":
         if drought_indicator >= 0.6:
@@ -247,9 +278,11 @@ async def _calc_water_score(session) -> dict:
             detail = "Niedrigwasser"
     elif primary_condition == "high_water":
         detail = "Hochwasser"
+    if flood_points > 0:
+        detail += f" + Regenprognose {rain_next_24h} mm/24h"
 
     return {
-        "score": min(100, max_score),
+        "score": min(100, max_score + flood_points),
         "weight": 1.5,
         "detail": detail,
         "stations": station_data,
@@ -259,6 +292,8 @@ async def _calc_water_score(session) -> dict:
         "primary_condition": primary_condition,
         "high_water_score": high_water_score,
         "low_water_score": low_water_score,
+        "flood_rain_boost": flood_points,
+        "rain_next_24h_mm": rain_next_24h,
     }
 
 

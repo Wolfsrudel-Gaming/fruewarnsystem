@@ -10,6 +10,7 @@ import FireDangerCard from '@/components/FireDangerCard';
 import WeatherCard from '@/components/WeatherCard';
 import AirQualityCard from '@/components/AirQualityCard';
 import CategoryDetailModal from '@/components/CategoryDetailModal';
+import AppConnectCard from '@/components/AppConnectCard';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useDashboardStore } from '@/store/dashboard';
 import { apiFetch } from '@/lib/api';
@@ -144,6 +145,11 @@ export default function Dashboard() {
               alerts={store.activeAlerts}
               onAcknowledge={() => setRefreshKey((k) => k + 1)}
             />
+          </div>
+
+          {/* App-Anbindung */}
+          <div className="card slide-in xl:col-span-3" style={{ animationDelay: '.8s', padding: '20px 28px' }}>
+            <AppConnectCard />
           </div>
         </div>
 
