@@ -10,7 +10,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.models.database import init_db
-from app.api.routes import dashboard, system, auth, webhooks
+from app.api.routes import dashboard, system, auth, webhooks, analysis
 from app.api.websocket.manager import ws_manager
 from app.collectors.water.pegel_collector import collect_water_levels
 from app.collectors.weather.dwd_collector import collect_dwd_warnings, collect_dwd_forecast, collect_radar_data
@@ -144,6 +144,7 @@ app.include_router(auth.router)
 app.include_router(dashboard.router)
 app.include_router(system.router)
 app.include_router(webhooks.router)
+app.include_router(analysis.router)
 
 
 @app.websocket("/ws")
