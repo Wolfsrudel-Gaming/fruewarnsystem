@@ -179,7 +179,7 @@ services:
       - REPO_DIR=/repo
       - COMPOSE_FILE=/repo/docker-compose.yml
       - UPDATE_BRANCH=claude/drk-troisdorf-early-warning-h4bdz3
-      - CHECK_INTERVAL=1800
+      - CHECK_INTERVAL=60
       - NTFY_TOPIC=${FWS_NTFY_TOPIC:-drk-troisdorf-fws}
       - NTFY_SERVER=${FWS_NTFY_SERVER:-https://ntfy.sh}
     volumes:
