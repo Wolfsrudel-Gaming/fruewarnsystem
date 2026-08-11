@@ -63,7 +63,13 @@ class AutoUpdater:
             )
             remote_hash = result.stdout.strip()
 
-            if remote_hash == self.current_version:
+            # Up to date, wenn alle Remote-Commits bereits enthalten sind
+            # (lokale Deployment-Commits duerfen voraus sein)
+            ancestor = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", remote_hash, "HEAD"],
+                capture_output=True, cwd=str(REPO_DIR), timeout=10
+            )
+            if ancestor.returncode == 0:
                 logger.debug("System is up to date")
                 return None
 
