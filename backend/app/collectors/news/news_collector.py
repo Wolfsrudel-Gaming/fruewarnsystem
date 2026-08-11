@@ -1,6 +1,6 @@
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 import httpx
@@ -112,6 +112,21 @@ async def collect_news():
     return results
 
 
+def _apply_analysis(db_item: NewsItem, analysis: dict, keyword_score: float):
+    db_item.ai_analysis = analysis
+    llm_score = analysis.get("relevance_score", 0)
+    db_item.relevance_score = (keyword_score * 0.3) + (llm_score * 0.7)
+    db_item.is_relevant = db_item.relevance_score > 0.3
+    if analysis.get("category") and analysis["category"] != "sonstiges":
+        db_item.category = analysis["category"]
+
+    if analysis.get("escalation_potential") in ("high", "critical"):
+        logger.warning(
+            f"HIGH ESCALATION NEWS: [{db_item.source}] {db_item.title} "
+            f"- {analysis.get('drk_relevance', '')}"
+        )
+
+
 async def _run_llm_analysis(new_items: list[dict]):
     from app.services.analysis.llm_analyzer import analyzer
 
@@ -140,23 +155,68 @@ async def _run_llm_analysis(new_items: list[dict]):
                 stmt = select(NewsItem).where(NewsItem.content_hash == item["content_hash"])
                 db_item = (await session.execute(stmt)).scalar_one_or_none()
                 if db_item:
-                    db_item.ai_analysis = analysis
-                    llm_score = analysis.get("relevance_score", 0)
-                    keyword_score = item["relevance_score"]
-                    db_item.relevance_score = (keyword_score * 0.3) + (llm_score * 0.7)
-                    db_item.is_relevant = db_item.relevance_score > 0.3
-                    if analysis.get("category") and analysis["category"] != "sonstiges":
-                        db_item.category = analysis["category"]
+                    _apply_analysis(db_item, analysis, keyword_score=item["relevance_score"])
                     await session.commit()
-
-                    if analysis.get("escalation_potential") in ("high", "critical"):
-                        logger.warning(
-                            f"HIGH ESCALATION NEWS: [{item['source']}] {item['title']} "
-                            f"- {analysis.get('drk_relevance', '')}"
-                        )
 
         except Exception as e:
             logger.error(f"LLM analysis failed for '{item['title'][:60]}': {e}")
+
+
+async def analyze_news_backlog(batch_size: int = 4, max_age_days: int = 7):
+    """Analysiert Bestandsmeldungen ohne ai_analysis nachträglich (CPU-schonend in kleinen Batches).
+
+    Wird vom Scheduler periodisch aufgerufen. Meldungen, deren Analyse fehlschlägt,
+    bekommen einen Fehlermarker, damit sie die Warteschlange nicht dauerhaft blockieren.
+    """
+    from sqlalchemy import select
+    from app.services.analysis.llm_analyzer import analyzer
+
+    if not await analyzer.check_availability():
+        logger.debug("News backlog: Ollama nicht verfügbar, überspringe Lauf")
+        return
+
+    cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+    async with async_session() as session:
+        stmt = (
+            select(NewsItem)
+            .where(NewsItem.ai_analysis.is_(None))
+            .where(NewsItem.relevance_score >= 0.1)
+            .where(NewsItem.created_at > cutoff)
+            .order_by(NewsItem.relevance_score.desc(), NewsItem.created_at.desc())
+            .limit(batch_size)
+        )
+        pending = (await session.execute(stmt)).scalars().all()
+
+    if not pending:
+        return
+
+    logger.info(f"News backlog: analysiere {len(pending)} unanalysierte Meldungen...")
+
+    for item in pending:
+        try:
+            analysis = await analyzer.analyze_article(
+                title=item.title,
+                summary=item.summary or "",
+                source=item.source or "",
+                published=item.published_at.isoformat() if item.published_at else None,
+            )
+        except Exception as e:
+            logger.error(f"Backlog-Analyse fehlgeschlagen für '{item.title[:60]}': {e}")
+            analysis = None
+
+        async with async_session() as session:
+            db_item = await session.get(NewsItem, item.id)
+            if not db_item:
+                continue
+            if analysis is None:
+                # Fehlermarker statt Endlos-Retry (Timeout oder unparsbare Antwort)
+                db_item.ai_analysis = {
+                    "error": "analysis_failed",
+                    "failed_at": datetime.utcnow().isoformat(),
+                }
+            else:
+                _apply_analysis(db_item, analysis, keyword_score=db_item.relevance_score or 0.0)
+            await session.commit()
 
 
 def _calculate_relevance(title: str, summary: str) -> float:

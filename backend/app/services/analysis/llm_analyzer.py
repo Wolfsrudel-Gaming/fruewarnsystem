@@ -60,11 +60,25 @@ Veröffentlicht: {published}
 Ist diese Meldung für das DRK Troisdorf einsatzrelevant? Antworte NUR mit JSON."""
 
 
+AVAILABILITY_RECHECK_SECONDS = 600
+
+
 class OllamaAnalyzer:
     def __init__(self):
         self._available = None
+        self._last_check = 0.0
+
+    async def _ensure_available(self) -> bool:
+        import time
+        if self._available:
+            return True
+        if time.monotonic() - self._last_check >= AVAILABILITY_RECHECK_SECONDS:
+            await self.check_availability()
+        return bool(self._available)
 
     async def check_availability(self) -> bool:
+        import time
+        self._last_check = time.monotonic()
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(f"{settings.ollama_url}/api/tags", timeout=5)
@@ -85,15 +99,13 @@ class OllamaAnalyzer:
 
     async def analyze_article(self, title: str, summary: str, source: str,
                               published: str = None) -> Optional[dict]:
-        if self._available is None:
-            await self.check_availability()
-        if not self._available:
+        if not await self._ensure_available():
             return None
 
         prompt = USER_PROMPT_TEMPLATE.format(
             source=source,
             title=title,
-            summary=(summary or "")[:1500],
+            summary=(summary or "")[:800],
             published=published or "unbekannt",
         )
 
@@ -108,12 +120,14 @@ class OllamaAnalyzer:
                             {"role": "user", "content": prompt},
                         ],
                         "stream": False,
+                        "format": "json",
+                        "keep_alive": "2h",
                         "options": {
                             "temperature": 0.1,
-                            "num_predict": 512,
+                            "num_predict": 256,
                         },
                     },
-                    timeout=120,
+                    timeout=300,
                 )
 
                 if resp.status_code != 200:
@@ -132,9 +146,7 @@ class OllamaAnalyzer:
             return None
 
     async def generate_situation_report(self, context: dict) -> Optional[str]:
-        if self._available is None:
-            await self.check_availability()
-        if not self._available:
+        if not await self._ensure_available():
             return None
 
         report_prompt = _build_report_prompt(context)

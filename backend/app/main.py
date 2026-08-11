@@ -21,7 +21,7 @@ from app.collectors.water.drought_collector import collect_drought_data
 from app.collectors.weather.dwd_collector import collect_dwd_warnings, collect_dwd_forecast, collect_radar_data
 from app.collectors.weather.lightning_collector import collect_lightning
 from app.collectors.fire.fire_collector import collect_fire_risk
-from app.collectors.news.news_collector import collect_news
+from app.collectors.news.news_collector import collect_news, analyze_news_backlog
 from app.collectors.warnings.nina_collector import collect_official_warnings
 from app.collectors.warnings.feuerwehr_bonn_collector import collect_feuerwehr_bonn
 from app.collectors.warnings.gdacs_collector import collect_gdacs_alerts
@@ -116,6 +116,9 @@ async def lifespan(app: FastAPI):
                       args=["fire", collect_fire_risk], id="fire", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_news,
                       args=["news", collect_news], id="news", replace_existing=True)
+    # KI-Nachanalyse für Meldungen ohne ai_analysis (kleine Batches, CPU-schonend)
+    scheduler.add_job(run_collector, "interval", minutes=15,
+                      args=["news_ai_backlog", analyze_news_backlog], id="news_ai_backlog", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_traffic,
                       args=["traffic", collect_traffic], id="traffic", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_traffic,
