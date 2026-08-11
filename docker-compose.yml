@@ -176,8 +176,8 @@ services:
     container_name: fws-autoupdate
     restart: unless-stopped
     environment:
-      - REPO_DIR=/repo
-      - COMPOSE_FILE=/repo/docker-compose.yml
+      - REPO_DIR=/opt/fruewarnsystem
+      - COMPOSE_FILE=/opt/fruewarnsystem/docker-compose.yml
       - UPDATE_BRANCH=claude/drk-troisdorf-early-warning-h4bdz3
       - CHECK_INTERVAL=60
       - COMPOSE_PROJECT_NAME=fruewarnsystem
@@ -185,7 +185,7 @@ services:
       - NTFY_SERVER=${FWS_NTFY_SERVER:-https://ntfy.sh}
       - GIT_SSH_COMMAND=ssh -i /root/.ssh/fws_deploy_key -o IdentitiesOnly=yes -o UserKnownHostsFile=/tmp/known_hosts -o StrictHostKeyChecking=accept-new
     volumes:
-      - ./:/repo
+      - /opt/fruewarnsystem:/opt/fruewarnsystem
       - /root/.ssh:/root/.ssh:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:

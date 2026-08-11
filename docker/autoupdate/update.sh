@@ -1,8 +1,8 @@
 #!/bin/bash
 set -uo pipefail
 
-REPO_DIR="${REPO_DIR:-/repo}"
-COMPOSE_FILE="${COMPOSE_FILE:-/repo/docker-compose.yml}"
+REPO_DIR="${REPO_DIR:-/opt/fruewarnsystem}"
+COMPOSE_FILE="${COMPOSE_FILE:-/opt/fruewarnsystem/docker-compose.yml}"
 UPDATE_BRANCH="${UPDATE_BRANCH:-main}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-60}"
 NTFY_TOPIC="${NTFY_TOPIC:-}"
@@ -66,21 +66,23 @@ push_local_commits() {
 apply_services() {
     local diff_files="$1"
 
-    # Bestehende Stack-Services anwenden (kein neuer Projektname!)
-    if ! dc --profile with-autoupdate up -d --remove-orphans 2>&1; then
-        log "WARN: compose up fehlgeschlagen, versuche gezielte Restarts..."
-    fi
+    # WICHTIG: Kein blindes "up -d" fuer den ganzen Stack.
+    # Das recreate't unnoetig und kann Bind-Mounts/Neben-Services stoeren.
+    # Stattdessen nur betroffene Services gezielt aktualisieren.
 
-    # Frontend: Code ist im Image -> immer neu deployen wenn frontend/ geaendert
+    # Frontend: Code ist im Image -> recreate noetig
     if echo "$diff_files" | grep -qE '^frontend/|^docker-compose\.yml'; then
         log "Frontend neu deployen..."
         dc up -d --no-deps --force-recreate frontend 2>&1 || true
     fi
 
-    # Backend: Volume-Mount -> Restart reicht fuer Code; Image-Rebuild bei Dockerfile/requirements
-    if echo "$diff_files" | grep -qE '^backend/|^docker-compose\.yml'; then
-        log "Backend neu starten..."
-        dc up -d --no-deps --force-recreate backend 2>&1 || dc restart backend 2>&1 || true
+    # Backend: Code via Volume -> restart reicht; bei Image-Aenderung recreate
+    if echo "$diff_files" | grep -qE '^backend/Dockerfile|^backend/requirements'; then
+        log "Backend Image geaendert, recreate..."
+        dc up -d --no-deps --force-recreate backend 2>&1 || true
+    elif echo "$diff_files" | grep -qE '^backend/|^docker-compose\.yml'; then
+        log "Backend Code geaendert, restart..."
+        dc restart backend 2>&1 || true
     fi
 
     if echo "$diff_files" | grep -q '^docker/nginx/'; then
@@ -92,6 +94,12 @@ apply_services() {
     fi
     if echo "$diff_files" | grep -q '^docker/mosquitto/'; then
         dc restart mqtt 2>&1 || true
+    fi
+
+    # Compose-Datei selbst: nur geaenderte Kern-Services anwenden
+    if echo "$diff_files" | grep -q '^docker-compose\.yml'; then
+        log "docker-compose.yml geaendert, stack sync..."
+        dc up -d --no-recreate backend frontend nginx 2>&1 || true
     fi
 }
 
