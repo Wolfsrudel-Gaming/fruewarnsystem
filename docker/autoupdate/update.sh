@@ -49,8 +49,10 @@ check_and_update() {
     local remote_hash
     remote_hash=$(get_remote_hash)
 
-    if [ "$current_hash" = "$remote_hash" ]; then
-        log "System is up to date ($current_hash)"
+    # Up to date, wenn alle Remote-Commits bereits enthalten sind
+    # (lokale Deployment-Commits duerfen voraus sein)
+    if git merge-base --is-ancestor "$remote_hash" "$current_hash" 2>/dev/null; then
+        log "System is up to date ($current_hash, remote: $remote_hash)"
         return 0
     fi
 
