@@ -123,6 +123,64 @@ def test_stale_tolerance_constant_is_sane():
     assert STALE_SERIES_TOLERANCE_MS == 48 * HOUR
 
 
+
+
+
+# --- Filter-Zuordnung (empirisch gegen die Live-API verifiziert) ---
+
+def test_wind_offshore_uses_verified_filter():
+    """4169 ist ein Boersenpreis, kein Wind Offshore.
+
+    Verifiziert: 4169 folgt dem Preisverlauf von Filter 252
+    (300.2 -> 229.6 -> 190.7 -> 172.1 EUR/MWh), waehrend 124 die
+    Offshore-Erzeugung liefert (970 -> 1120 -> 1217 -> 1281 MW).
+    """
+    from app.collectors.power.grid_collector import FILTER_GENERATION, FILTER_PRICE
+    assert FILTER_GENERATION.get(124) == "Wind Offshore"
+    assert 4169 not in FILTER_GENERATION, "Preisfilter darf nicht als Erzeugung zaehlen"
+    assert FILTER_PRICE == 252
+
+
+def test_no_phantom_total_generation_filter():
+    """SMARD hat keinen Summenfilter — 4359 ist residuallast-artig."""
+    from app.collectors.power.grid_collector import FILTER_GENERATION
+    assert 4359 not in FILTER_GENERATION
+    assert 4072 not in FILTER_GENERATION  # installierte Leistung, konstant
+
+
+def test_renewables_exclude_storage():
+    from app.collectors.power.grid_collector import FILTER_GENERATION, RENEWABLE_IDS
+    assert 4070 not in RENEWABLE_IDS, "Pumpspeicher ist Speicher, kein EE-Erzeuger"
+    assert RENEWABLE_IDS <= set(FILTER_GENERATION), "EE muessen Teil der Erzeugung sein"
+    for fid in (1223, 4066, 4067, 124, 4068, 4069):
+        assert fid in RENEWABLE_IDS
+
+
+def test_generation_set_is_complete():
+    """Die zwoelf SMARD-Erzeugungsarten; Summe deckte sich mit Prognose 122."""
+    from app.collectors.power.grid_collector import FILTER_GENERATION
+    assert len(FILTER_GENERATION) == 12
+    for name in ("Photovoltaik", "Wind Onshore", "Wind Offshore", "Erdgas",
+                 "Braunkohle", "Steinkohle", "Biomasse", "Wasserkraft"):
+        assert name in FILTER_GENERATION.values()
+
+
+def test_amprion_region_configured():
+    """Troisdorf liegt in der Amprion-Regelzone."""
+    from app.collectors.power.grid_collector import REGIONS
+    assert "DE" in REGIONS
+    assert "Amprion" in REGIONS
+
+
+def test_value_at_or_before_falls_back():
+    from app.collectors.power.grid_collector import _value_at_or_before
+    series = {100: 1.0, 200: 2.0, 300: 3.0}
+    assert _value_at_or_before(series, 200) == 2.0
+    assert _value_at_or_before(series, 250) == 2.0, "faellt auf juengsten davor zurueck"
+    assert _value_at_or_before(series, 50) is None
+    assert _value_at_or_before(None, 200) is None
+
+
 if __name__ == "__main__":
     import traceback
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

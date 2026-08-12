@@ -6,6 +6,7 @@ import '../models/api_models.dart';
 import '../services/app_state.dart';
 import '../widgets/score_bar.dart';
 import 'lagebild_screen.dart' show waterLevelColor;
+import 'strom_screen.dart';
 
 class KategorieDetailScreen extends StatefulWidget {
   final String category;
@@ -298,9 +299,49 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
         return _buildTrafficDetails(state);
       case 'air_quality':
         return _buildAirQualityDetails(state);
+      case 'power':
+        return _buildPowerLink();
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildPowerLink() {
+    return GestureDetector(
+      onTap: () => Navigator.push(context, MaterialPageRoute(
+        builder: (_) => const StromScreen(),
+      )),
+      child: _card(
+        child: Row(
+          children: [
+            Container(
+              width: 40, height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.yellow.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.bolt, size: 20, color: AppColors.yellowLight),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Stromnetz im Detail',
+                      style: TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
+                  Text('Erzeugungsmix, Netzlast, Börsenpreis, Regelzone Amprion',
+                      style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: AppColors.textMuted, size: 20),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _sectionTitle(String text) {

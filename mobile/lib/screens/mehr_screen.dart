@@ -10,6 +10,7 @@ import 'warnungen_screen.dart';
 import 'news_screen.dart';
 import 'einsatz_melden_screen.dart';
 import 'lernstatus_screen.dart';
+import 'strom_screen.dart';
 
 class MehrScreen extends StatelessWidget {
   const MehrScreen({super.key});
@@ -49,6 +50,15 @@ class MehrScreen extends StatelessWidget {
           subtitle: 'NINA, Katwarn, MoWaS, GDACS',
           onTap: () => Navigator.push(context, MaterialPageRoute(
             builder: (_) => const WarnungenScreen(),
+          )),
+        ),
+        _menuItem(
+          context,
+          icon: Icons.bolt,
+          label: 'Stromnetz',
+          subtitle: 'Erzeugungsmix, Netzlast, Börsenpreis (SMARD)',
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const StromScreen(),
           )),
         ),
         _menuItem(

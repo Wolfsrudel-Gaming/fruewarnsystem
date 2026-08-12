@@ -142,6 +142,59 @@ Jedes Element: `id`, `type`, `region`, `severity`, `title`, `description`,
 
 Antwort: `{ "status": "acknowledged", "id": 1 }`. Unbekannte ID → HTTP 404.
 
+### `GET /api/dashboard/power?hours=24` — Stromnetz im Detail
+
+Liefert je Regelzone den aktuellsten Stand plus Verlauf: Erzeugungsmix nach
+Energieträger, Netzlast, Bilanz, EE-Anteil, Börsenpreis und Erzeugungsprognose.
+
+```json
+{
+  "regions": [
+    {
+      "region": "DE", "region_label": "Deutschland",
+      "consumption_mw": 55243.0, "generation_mw": 72425.0,
+      "balance_mw": 17182.0, "renewable_share": 0.931,
+      "price_eur_mwh": 14.57, "forecast_total_mw": 73855.0,
+      "is_stressed": false, "stress_indicator": null,
+      "generation_parts": { "Photovoltaik": 57146.0, "Biomasse": 4863.0 },
+      "renewable_parts": { "Photovoltaik": 57146.0 }
+    }
+  ],
+  "history": [ … ]
+}
+```
+
+Erfasst werden zwei Regelzonen: `DE` (bundesweit) und `Amprion` — die
+Regelzone, in der Troisdorf liegt. Netzstress wird **nur bundesweit**
+bewertet, eine einzelne Regelzone hat keine eigene Bilanz.
+
+#### Verifizierte SMARD-Filter
+
+Alle IDs wurden empirisch gegen die Live-API geprüft. Zwei Fallstricke, die
+hier bereits Fehler verursacht haben, sind eigens vermerkt.
+
+| ID | Bedeutung | Einheit |
+|---|---|---|
+| 410 | Netzlast (Stromverbrauch) | MW |
+| 1223 / 1225 / 1226 / 1227 | Biomasse / Braunkohle / Steinkohle / Erdgas | MW |
+| 4066 / 4067 / **124** / 4068 | Wasserkraft / Wind Onshore / **Wind Offshore** / Photovoltaik | MW |
+| 4069 / 4070 / 4071 / 1224 | Sonstige EE / Pumpspeicher / Sonstige Konv. / Kernenergie | MW |
+| 122 | Prognostizierte Erzeugung gesamt | MW |
+| 252 | Großhandelspreis Deutschland/Luxemburg | EUR/MWh |
+
+**Nicht verwenden:**
+- **4359** ist *kein* „Erzeugung gesamt". SMARD hat überhaupt keinen
+  Summenfilter — die Gesamterzeugung muss aus den Einzelarten summiert
+  werden. 4359 fällt, wenn die PV-Einspeisung steigt (residuallast-artig).
+- **4169** ist *kein* Wind Offshore, sondern eine Preiszeitreihe in EUR/MWh
+  (läuft im Gleichlauf mit 252). Wind Offshore ist **124**.
+
+Verfügbar sind 6 Auflösungen (`quarterhour`, `hour`, `day`, `week`, `month`,
+`year`) und 11 Regionen (`DE`, `AT`, `LU`, `DE-LU`, `DE-AT-LU`, die vier
+Übertragungsnetzbetreiber `50Hertz`/`Amprion`/`TenneT`/`TransnetBW`, `APG`,
+`CREOS`). Nicht jede Erzeugungsart existiert in jeder Regelzone — Amprion
+hat z.B. keine Braunkohle.
+
 ## Lernschleife: Rückmeldungen und Selbstkalibrierung
 
 Das System lernt aus den Rückmeldungen der Einsatzkräfte, wie zuverlässig

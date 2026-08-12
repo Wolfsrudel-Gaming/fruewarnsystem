@@ -1081,3 +1081,73 @@ async def set_calibration_lock(
     cal.is_locked = locked
     await db.commit()
     return {"status": "updated", "category": resolved, "is_locked": locked}
+
+
+@router.get("/power")
+async def get_power_detail(
+    hours: int = Query(24, ge=1, le=168),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stromnetz im Detail: Erzeugungsmix, Netzlast, Börsenpreis, Prognose.
+
+    Liefert je Regelzone den aktuellsten Stand plus Verlauf. Troisdorf liegt
+    im Amprion-Gebiet — dessen Werte sind lokal aussagekräftiger als die
+    bundesweiten.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    rows = (await db.execute(
+        select(GridStatus)
+        .where(GridStatus.created_at > cutoff)
+        .order_by(desc(GridStatus.timestamp))
+    )).scalars().all()
+
+    if not rows:
+        return {"regions": [], "history": [], "hinweis": "Noch keine Stromdaten erfasst"}
+
+    regions = {}
+    history = []
+    for r in rows:
+        raw = r.raw_data if isinstance(r.raw_data, dict) else {}
+        entry = {
+            "region": r.region,
+            "region_label": raw.get("region_label", r.region),
+            "generation_mw": r.generation_mw,
+            "consumption_mw": r.consumption_mw,
+            "balance_mw": r.balance_mw,
+            "renewable_share": r.renewable_share,
+            "price_eur_mwh": r.price_eur_mwh,
+            "forecast_total_mw": raw.get("forecast_total_mw"),
+            "import_share": raw.get("import_share"),
+            "is_stressed": r.is_stressed,
+            "stress_indicator": r.stress_indicator,
+            "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+            "generation_parts": raw.get("generation_parts", {}),
+            "renewable_parts": raw.get("renewable_parts", {}),
+            "conventional_parts": raw.get("conventional_parts", {}),
+        }
+        # Neuester Stand je Regelzone (rows sind absteigend sortiert)
+        if r.region not in regions:
+            regions[r.region] = entry
+
+        history.append({
+            "region": r.region,
+            "timestamp": entry["timestamp"],
+            "consumption_mw": r.consumption_mw,
+            "generation_mw": r.generation_mw,
+            "balance_mw": r.balance_mw,
+            "renewable_share": r.renewable_share,
+            "price_eur_mwh": r.price_eur_mwh,
+        })
+
+    # Bundeswert zuerst, dann die Regelzonen
+    ordered = sorted(regions.values(), key=lambda x: (x["region"] != "DE", x["region"]))
+
+    return {
+        "regions": ordered,
+        "history": history,
+        "source": "SMARD / Bundesnetzagentur",
+        "hinweis": (
+            "Netzstress wird nur bundesweit bewertet — eine einzelne Regelzone "
+            "hat keine eigene Bilanz."
+        ),
+    }

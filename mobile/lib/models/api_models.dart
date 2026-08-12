@@ -541,3 +541,119 @@ class CalibrationReport {
     );
   }
 }
+
+/// Stromnetz-Detaildaten einer Regelzone (SMARD/Bundesnetzagentur)
+class PowerRegionData {
+  final String region;
+  final String regionLabel;
+  final double? generationMw;
+  final double? consumptionMw;
+  final double? balanceMw;
+  final double? renewableShare;
+  final double? priceEurMwh;
+  final double? forecastTotalMw;
+  final bool isStressed;
+  final String? stressIndicator;
+  final String? timestamp;
+  final Map<String, double> generationParts;
+  final Map<String, double> renewableParts;
+
+  PowerRegionData({
+    required this.region,
+    required this.regionLabel,
+    this.generationMw,
+    this.consumptionMw,
+    this.balanceMw,
+    this.renewableShare,
+    this.priceEurMwh,
+    this.forecastTotalMw,
+    required this.isStressed,
+    this.stressIndicator,
+    this.timestamp,
+    this.generationParts = const {},
+    this.renewableParts = const {},
+  });
+
+  static Map<String, double> _parts(dynamic raw) {
+    if (raw is! Map) return {};
+    final out = <String, double>{};
+    raw.forEach((k, v) {
+      final d = (v as num?)?.toDouble();
+      if (d != null) out[k.toString()] = d;
+    });
+    return out;
+  }
+
+  factory PowerRegionData.fromJson(Map<String, dynamic> json) {
+    return PowerRegionData(
+      region: json['region'] as String? ?? '',
+      regionLabel: json['region_label'] as String? ?? '',
+      generationMw: (json['generation_mw'] as num?)?.toDouble(),
+      consumptionMw: (json['consumption_mw'] as num?)?.toDouble(),
+      balanceMw: (json['balance_mw'] as num?)?.toDouble(),
+      renewableShare: (json['renewable_share'] as num?)?.toDouble(),
+      priceEurMwh: (json['price_eur_mwh'] as num?)?.toDouble(),
+      forecastTotalMw: (json['forecast_total_mw'] as num?)?.toDouble(),
+      isStressed: json['is_stressed'] as bool? ?? false,
+      stressIndicator: json['stress_indicator'] as String?,
+      timestamp: json['timestamp'] as String?,
+      generationParts: _parts(json['generation_parts']),
+      renewableParts: _parts(json['renewable_parts']),
+    );
+  }
+
+  /// Erzeugungsarten absteigend nach Leistung, nur mit Wert > 0
+  List<MapEntry<String, double>> get sortedParts {
+    final list = generationParts.entries.where((e) => e.value > 0).toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return list;
+  }
+
+  bool isRenewable(String name) => renewableParts.containsKey(name);
+}
+
+class PowerHistoryPoint {
+  final String region;
+  final DateTime? timestamp;
+  final double? consumptionMw;
+  final double? generationMw;
+  final double? priceEurMwh;
+
+  PowerHistoryPoint({
+    required this.region,
+    this.timestamp,
+    this.consumptionMw,
+    this.generationMw,
+    this.priceEurMwh,
+  });
+
+  factory PowerHistoryPoint.fromJson(Map<String, dynamic> json) {
+    return PowerHistoryPoint(
+      region: json['region'] as String? ?? '',
+      timestamp: DateTime.tryParse(json['timestamp'] as String? ?? ''),
+      consumptionMw: (json['consumption_mw'] as num?)?.toDouble(),
+      generationMw: (json['generation_mw'] as num?)?.toDouble(),
+      priceEurMwh: (json['price_eur_mwh'] as num?)?.toDouble(),
+    );
+  }
+}
+
+class PowerDetail {
+  final List<PowerRegionData> regions;
+  final List<PowerHistoryPoint> history;
+  final String? source;
+
+  PowerDetail({required this.regions, required this.history, this.source});
+
+  factory PowerDetail.fromJson(Map<String, dynamic> json) {
+    return PowerDetail(
+      regions: (json['regions'] as List? ?? [])
+          .map((r) => PowerRegionData.fromJson(r as Map<String, dynamic>))
+          .toList(),
+      history: (json['history'] as List? ?? [])
+          .map((h) => PowerHistoryPoint.fromJson(h as Map<String, dynamic>))
+          .toList(),
+      source: json['source'] as String?,
+    );
+  }
+}

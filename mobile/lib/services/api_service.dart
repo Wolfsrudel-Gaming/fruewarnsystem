@@ -217,6 +217,12 @@ class ApiService {
     }
   }
 
+  /// Stromnetz im Detail: Erzeugungsmix, Netzlast, Preis, Prognose
+  Future<PowerDetail?> fetchPowerDetail({int hours = 24}) async {
+    final data = await _getJson('/api/dashboard/power?hours=$hours');
+    return data != null ? PowerDetail.fromJson(data) : null;
+  }
+
   Future<CalibrationReport?> fetchCalibration() async {
     final data = await _getJson('/api/dashboard/calibration');
     return data != null ? CalibrationReport.fromJson(data) : null;
