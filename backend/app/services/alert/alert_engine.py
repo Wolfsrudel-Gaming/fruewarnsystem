@@ -858,30 +858,43 @@ async def _calc_power_score(session) -> dict:
 
     for r in stressed:
         balance = r.balance_mw or 0
-        score = 0
-        if balance < -5000:
-            score = 90
-        elif balance < -1000:
-            score = 60
-        elif balance < 0:
-            score = 30
+        consumption = r.consumption_mw or 0
+
+        # Bewertet wird der Importanteil an der Netzlast, nicht der Rohsaldo:
+        # Deutschland importiert im Verbundnetz routinemaessig Strom, ein
+        # negativer Saldo allein ist kein Warnsignal.
+        if consumption <= 0 or balance >= 0:
+            continue
+        import_share = -balance / consumption
+
+        if import_share >= 0.30:
+            score = 85
+        elif import_share >= 0.25:
+            score = 65
+        elif import_share >= 0.20:
+            score = 45
         else:
-            score = 15
+            score = 25
 
         contributions.append(_contrib(
             source=f"SMARD Bundesnetzagentur - {r.region}",
             source_type="grid",
-            value=f"Balance {balance:.0f} MW",
+            value=f"Import {abs(balance):.0f} MW ({import_share:.0%} der Netzlast)",
             points=score,
-            reason=r.stress_indicator or "Netzbelastung",
+            reason=r.stress_indicator or "Erhoehter Importbedarf",
             ts=r.timestamp,
         ))
 
     best = max((c["points"] for c in contributions), default=0)
     latest = readings[0]
-    detail = f"Balance {latest.balance_mw:.0f} MW" if latest.balance_mw else "Keine Belastung"
     if stressed:
         detail = f"Netzstress: {len(stressed)} Meldungen"
+    elif latest.balance_mw is None:
+        detail = "Keine Daten"
+    elif latest.balance_mw >= 0:
+        detail = f"Erzeugungsueberschuss {latest.balance_mw:.0f} MW"
+    else:
+        detail = f"Import {abs(latest.balance_mw):.0f} MW (Normalbetrieb)"
 
     return {
         "score": min(100, best),
