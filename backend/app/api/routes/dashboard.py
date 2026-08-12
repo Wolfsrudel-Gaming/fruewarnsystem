@@ -3,11 +3,13 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select, and_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
 from app.models.schemas import (
+    AlertFeedback, Deployment, CategoryCalibration, FeedbackOutcome,
     WaterLevel, WeatherData, FireRisk, AirQuality, NewsItem,
     OfficialWarning, TrafficEvent, EventCalendar, Alert,
     RiskScore, AlertCategory, AlertThreshold, LightningData,
@@ -781,3 +783,301 @@ async def get_dataset(
         "count": len(rows),
         "items": [_serialize_row(r, include_raw=include_raw) for r in rows],
     }
+
+
+# ---------------------------------------------------------------------------
+# Lernschleife: Rückmeldungen zu Alarmen und echten Einsätzen
+# ---------------------------------------------------------------------------
+
+
+class FeedbackRequest(BaseModel):
+    outcome: str = Field(..., description="einsatz | vorsorge | kein_einsatz | unklar")
+    deployment_type: Optional[str] = None
+    forces_count: Optional[int] = None
+    severity_rating: Optional[int] = Field(None, ge=1, le=5)
+    lead_time_minutes: Optional[int] = None
+    notes: Optional[str] = None
+    reported_by: Optional[str] = None
+
+
+class DeploymentRequest(BaseModel):
+    category: str
+    title: str
+    description: Optional[str] = None
+    occurred_at: Optional[datetime] = None
+    forces_count: Optional[int] = None
+    severity_rating: Optional[int] = Field(None, ge=1, le=5)
+    matched_alert_id: Optional[int] = None
+    reported_by: Optional[str] = None
+
+
+@router.post("/alerts/{alert_id}/feedback")
+async def submit_alert_feedback(
+    alert_id: int,
+    req: FeedbackRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Rückmeldung: Kam es nach diesem Alarm zu einem echten Einsatz?"""
+    alert = (await db.execute(select(Alert).where(Alert.id == alert_id))).scalar_one_or_none()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert nicht gefunden")
+
+    try:
+        outcome = FeedbackOutcome(req.outcome)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unbekanntes Ergebnis '{req.outcome}'. Erlaubt: "
+                   f"{', '.join(o.value for o in FeedbackOutcome)}",
+        )
+
+    existing = (await db.execute(
+        select(AlertFeedback).where(AlertFeedback.alert_id == alert_id)
+    )).scalar_one_or_none()
+
+    if existing:
+        # Korrektur einer bereits abgegebenen Rückmeldung
+        existing.outcome = outcome
+        existing.deployment_type = req.deployment_type
+        existing.forces_count = req.forces_count
+        existing.severity_rating = req.severity_rating
+        existing.lead_time_minutes = req.lead_time_minutes
+        existing.notes = req.notes
+        existing.reported_by = req.reported_by
+        feedback = existing
+        created = False
+    else:
+        feedback = AlertFeedback(
+            alert_id=alert_id,
+            category=alert.category,
+            outcome=outcome,
+            alert_score=alert.score,
+            deployment_type=req.deployment_type,
+            forces_count=req.forces_count,
+            severity_rating=req.severity_rating,
+            lead_time_minutes=req.lead_time_minutes,
+            notes=req.notes,
+            reported_by=req.reported_by,
+            score_snapshot=alert.source_data,
+        )
+        db.add(feedback)
+        created = True
+
+    # Ein bestätigter Einsatz wird zugleich als Einsatz protokolliert —
+    # so ist die Einsatzhistorie vollständig, egal über welchen Weg gemeldet.
+    if outcome == FeedbackOutcome.EINSATZ:
+        already = (await db.execute(
+            select(Deployment).where(Deployment.matched_alert_id == alert_id)
+        )).scalar_one_or_none()
+        if not already:
+            db.add(Deployment(
+                category=alert.category,
+                title=req.deployment_type or alert.title,
+                description=req.notes,
+                occurred_at=alert.triggered_at or datetime.utcnow(),
+                forces_count=req.forces_count,
+                severity_rating=req.severity_rating,
+                was_predicted=True,
+                matched_alert_id=alert_id,
+                reported_by=req.reported_by,
+            ))
+
+    await db.commit()
+
+    return {
+        "status": "created" if created else "updated",
+        "alert_id": alert_id,
+        "outcome": outcome.value,
+    }
+
+
+@router.get("/alerts/pending-feedback")
+async def get_alerts_pending_feedback(
+    days: int = Query(14, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+):
+    """Quittierte Alarme, zu denen noch keine Rückmeldung vorliegt."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    answered = {
+        r[0] for r in (await db.execute(select(AlertFeedback.alert_id))).all()
+    }
+
+    alerts = (await db.execute(
+        select(Alert)
+        .where(and_(Alert.triggered_at > cutoff, Alert.acknowledged == True))
+        .order_by(desc(Alert.triggered_at))
+    )).scalars().all()
+
+    pending = [a for a in alerts if a.id not in answered]
+
+    return {
+        "count": len(pending),
+        "alerts": [
+            {
+                "id": a.id,
+                "category": a.category.value,
+                "category_label": CATEGORY_LABELS.get(a.category.value, a.category.value),
+                "score": a.score,
+                "title": a.title,
+                "description": a.description,
+                "triggered_at": a.triggered_at.isoformat() if a.triggered_at else None,
+            }
+            for a in pending
+        ],
+    }
+
+
+@router.post("/deployments")
+async def log_deployment(req: DeploymentRequest, db: AsyncSession = Depends(get_db)):
+    """Einsatz melden — auch nachträglich und ohne vorherigen Alarm.
+
+    Einsätze ohne Alarm sind die wichtigste Lernquelle: Sie zeigen, wo das
+    System noch blind ist.
+    """
+    resolved = resolve_category(req.category)
+    try:
+        cat_enum = AlertCategory(resolved)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unbekannte Kategorie: {req.category}")
+
+    occurred = req.occurred_at or datetime.utcnow()
+
+    # Passenden Alarm suchen, falls keiner angegeben wurde: gleiche Kategorie,
+    # ausgelöst in den 12 Stunden vor dem Einsatz.
+    matched_id = req.matched_alert_id
+    if matched_id is None:
+        window_start = occurred - timedelta(hours=12)
+        candidate = (await db.execute(
+            select(Alert)
+            .where(and_(
+                Alert.category == cat_enum,
+                Alert.triggered_at >= window_start,
+                Alert.triggered_at <= occurred,
+            ))
+            .order_by(desc(Alert.triggered_at))
+            .limit(1)
+        )).scalar_one_or_none()
+        if candidate:
+            matched_id = candidate.id
+
+    deployment = Deployment(
+        category=cat_enum,
+        title=req.title,
+        description=req.description,
+        occurred_at=occurred,
+        forces_count=req.forces_count,
+        severity_rating=req.severity_rating,
+        was_predicted=matched_id is not None,
+        matched_alert_id=matched_id,
+        reported_by=req.reported_by,
+    )
+    db.add(deployment)
+    await db.commit()
+    await db.refresh(deployment)
+
+    return {
+        "status": "created",
+        "id": deployment.id,
+        "was_predicted": deployment.was_predicted,
+        "matched_alert_id": matched_id,
+        "hinweis": (
+            "Kein passender Alarm gefunden — dieser Einsatz zählt als verpasste Warnung "
+            "und macht das System in dieser Kategorie empfindlicher."
+            if matched_id is None else
+            "Passender Alarm gefunden und verknüpft."
+        ),
+    }
+
+
+@router.get("/deployments")
+async def list_deployments(
+    days: int = Query(180, ge=1, le=1095),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (await db.execute(
+        select(Deployment)
+        .where(Deployment.occurred_at > cutoff)
+        .order_by(desc(Deployment.occurred_at))
+        .limit(limit)
+    )).scalars().all()
+
+    return {
+        "count": len(rows),
+        "deployments": [
+            {
+                "id": d.id,
+                "category": d.category.value,
+                "category_label": CATEGORY_LABELS.get(d.category.value, d.category.value),
+                "title": d.title,
+                "description": d.description,
+                "occurred_at": d.occurred_at.isoformat() if d.occurred_at else None,
+                "forces_count": d.forces_count,
+                "severity_rating": d.severity_rating,
+                "was_predicted": d.was_predicted,
+                "matched_alert_id": d.matched_alert_id,
+                "reported_by": d.reported_by,
+            }
+            for d in rows
+        ],
+    }
+
+
+@router.delete("/deployments/{deployment_id}")
+async def delete_deployment(deployment_id: int, db: AsyncSession = Depends(get_db)):
+    """Fehleingabe zurücknehmen."""
+    dep = (await db.execute(
+        select(Deployment).where(Deployment.id == deployment_id)
+    )).scalar_one_or_none()
+    if not dep:
+        raise HTTPException(status_code=404, detail="Einsatz nicht gefunden")
+    await db.delete(dep)
+    await db.commit()
+    return {"status": "deleted", "id": deployment_id}
+
+
+@router.get("/calibration")
+async def get_calibration_status():
+    """Lernstatus: Treffsicherheit und gelernte Anpassungen je Kategorie."""
+    from app.services.learning.calibration import get_quality_report
+    report = await get_quality_report()
+    for cat in report.get("categories", []):
+        cat["category_label"] = CATEGORY_LABELS.get(cat["category"], cat["category"])
+    return report
+
+
+@router.post("/calibration/recompute")
+async def trigger_recompute(
+    window_days: int = Query(180, ge=7, le=1095),
+):
+    """Kalibrierung sofort neu berechnen (läuft sonst täglich automatisch)."""
+    from app.services.learning.calibration import recompute_calibration
+    results = await recompute_calibration(window_days=window_days)
+    return {"status": "recomputed", "categories": results}
+
+
+@router.put("/calibration/{category}/lock")
+async def set_calibration_lock(
+    category: str,
+    locked: bool = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Kategorie gegen automatische Anpassung sperren bzw. wieder freigeben."""
+    resolved = resolve_category(category)
+    try:
+        cat_enum = AlertCategory(resolved)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Unbekannte Kategorie: {category}")
+
+    cal = (await db.execute(
+        select(CategoryCalibration).where(CategoryCalibration.category == cat_enum)
+    )).scalar_one_or_none()
+    if not cal:
+        cal = CategoryCalibration(category=cat_enum)
+        db.add(cal)
+
+    cal.is_locked = locked
+    await db.commit()
+    return {"status": "updated", "category": resolved, "is_locked": locked}

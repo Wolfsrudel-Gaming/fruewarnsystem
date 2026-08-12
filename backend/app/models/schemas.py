@@ -445,3 +445,85 @@ class GDACAlert(Base):
     source = Column(String(100))
     raw_data = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=func.now())
+
+
+class FeedbackOutcome(str, enum.Enum):
+    """Rueckmeldung, was aus einem Alarm tatsaechlich geworden ist."""
+    EINSATZ = "einsatz"            # Echter Einsatz — Alarm war richtig (True Positive)
+    VORSORGE = "vorsorge"          # Kein Einsatz, aber Vorwarnung war berechtigt (halber Treffer)
+    KEIN_EINSATZ = "kein_einsatz"  # Fehlalarm (False Positive)
+    UNKLAR = "unklar"              # Nicht bewertbar — fliesst nicht ins Lernen ein
+
+
+class AlertFeedback(Base):
+    """Rueckmeldung der Einsatzkraefte zu einem ausgeloesten Alarm.
+
+    Basis fuer die Kalibrierung: Ohne diese Rueckmeldung kann das System
+    nicht wissen, ob seine Warnungen tatsaechlich getroffen haben.
+    """
+    __tablename__ = "alert_feedback"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(Integer, nullable=False, index=True)
+    category = Column(Enum(AlertCategory), nullable=False)
+    outcome = Column(Enum(FeedbackOutcome), nullable=False)
+    alert_score = Column(Float, nullable=True)      # Score zum Alarmzeitpunkt
+    deployment_type = Column(String(200), nullable=True)  # z.B. "Sandsackverbau", "Betreuung"
+    forces_count = Column(Integer, nullable=True)   # Eingesetzte Kraefte
+    severity_rating = Column(Integer, nullable=True)  # 1-5, subjektive Einsatzschwere
+    lead_time_minutes = Column(Integer, nullable=True)  # Vorlauf des Alarms vor dem Einsatz
+    notes = Column(Text, nullable=True)
+    reported_by = Column(String(200), nullable=True)
+    score_snapshot = Column(JSONB, nullable=True)   # Score-Zusammensetzung fuer Nachanalyse
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("ix_feedback_cat_outcome", "category", "outcome"),
+    )
+
+
+class Deployment(Base):
+    """Echter Einsatz — auch nachtraeglich und ohne vorherigen Alarm erfassbar.
+
+    Einsaetze ohne Alarm sind die wichtigste Lernquelle: Sie zeigen, wo das
+    System blind war (False Negatives).
+    """
+    __tablename__ = "deployments"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category = Column(Enum(AlertCategory), nullable=False)
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    occurred_at = Column(DateTime, nullable=False, index=True)
+    forces_count = Column(Integer, nullable=True)
+    severity_rating = Column(Integer, nullable=True)  # 1-5
+    was_predicted = Column(Boolean, default=False)    # Gab es einen passenden Alarm?
+    matched_alert_id = Column(Integer, nullable=True)
+    reported_by = Column(String(200), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("ix_deployments_cat_time", "category", "occurred_at"),
+    )
+
+
+class CategoryCalibration(Base):
+    """Gelernte Anpassung pro Kategorie.
+
+    weight_multiplier wirkt auf das Kategoriegewicht im Gesamtscore,
+    threshold_offset verschiebt die Ausloeseschwelle (negativ = frueher warnen).
+    """
+    __tablename__ = "category_calibration"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    category = Column(Enum(AlertCategory), nullable=False, unique=True)
+    weight_multiplier = Column(Float, default=1.0)
+    threshold_offset = Column(Float, default=0.0)
+    true_positives = Column(Integer, default=0)
+    partial_positives = Column(Integer, default=0)
+    false_positives = Column(Integer, default=0)
+    false_negatives = Column(Integer, default=0)
+    precision = Column(Float, nullable=True)
+    recall = Column(Float, nullable=True)
+    f1_score = Column(Float, nullable=True)
+    sample_count = Column(Integer, default=0)
+    is_locked = Column(Boolean, default=False)  # Manuell fixiert, kein Auto-Lernen
+    last_adjustment_reason = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

@@ -140,7 +140,68 @@ Jedes Element: `id`, `type`, `region`, `severity`, `title`, `description`,
 
 ### `POST /api/dashboard/alerts/{id}/acknowledge` — Alarm quittieren
 
-Antwort: `{ "status": "acknowledged", "id": 1 }` bzw. `{ "error": "Alert not found" }`.
+Antwort: `{ "status": "acknowledged", "id": 1 }`. Unbekannte ID → HTTP 404.
+
+## Lernschleife: Rückmeldungen und Selbstkalibrierung
+
+Das System lernt aus den Rückmeldungen der Einsatzkräfte, wie zuverlässig
+seine Warnungen sind, und passt Gewichtung und Auslöseschwelle je Kategorie
+täglich an (nachts um 3:30 Uhr, oder manuell per `recompute`).
+
+### `POST /api/dashboard/alerts/{id}/feedback` — Kam es zum Einsatz?
+
+```json
+{
+  "outcome": "einsatz",
+  "deployment_type": "Kellerauspumpen",
+  "forces_count": 12,
+  "severity_rating": 4,
+  "notes": "Pegel stieg schneller als erwartet"
+}
+```
+
+`outcome` ist eines von `einsatz` (Volltreffer), `vorsorge` (kein Einsatz,
+aber Warnung war berechtigt — zählt halb), `kein_einsatz` (Fehlalarm),
+`unklar` (fließt nicht ins Lernen ein). Alle Felder außer `outcome` sind
+optional. Erneutes Senden zur selben Alarm-ID korrigiert die Rückmeldung.
+Bei `einsatz` wird automatisch ein verknüpfter Einsatz protokolliert.
+
+### `GET /api/dashboard/alerts/pending-feedback?days=14` — offene Rückmeldungen
+
+Quittierte Alarme ohne Rückmeldung. Die App zeigt sie als eigenen Tab.
+
+### `POST /api/dashboard/deployments` — Einsatz melden
+
+Auch **ohne** vorherigen Alarm — das ist die wichtigste Lernquelle, weil
+solche Einsätze zeigen, wo das System blind war.
+
+```json
+{
+  "category": "hochwasser",
+  "title": "Kellerauspumpen Bergstraße",
+  "occurred_at": "2026-08-11T18:00:00",
+  "forces_count": 8,
+  "severity_rating": 3
+}
+```
+
+Der Server sucht selbst nach einem passenden Alarm (gleiche Kategorie,
+in den 12 Stunden vor dem Einsatz) und setzt `was_predicted` entsprechend.
+Antwort enthält `was_predicted`, `matched_alert_id` und einen Klartext-`hinweis`.
+
+| Endpunkt | Inhalt |
+|---|---|
+| `GET /api/dashboard/deployments?days=180` | Einsatzhistorie |
+| `DELETE /api/dashboard/deployments/{id}` | Fehleingabe zurücknehmen |
+| `GET /api/dashboard/calibration` | Lernstatus: Precision/Recall gesamt und je Kategorie, gelernte Anpassungen mit Begründung |
+| `POST /api/dashboard/calibration/recompute?window_days=180` | Kalibrierung sofort neu berechnen |
+| `PUT /api/dashboard/calibration/{category}/lock?locked=true` | Kategorie gegen Auto-Anpassung sperren |
+
+**Wie angepasst wird:** Ab 5 bewertbaren Rückmeldungen je Kategorie. Ein
+verpasster Einsatz wiegt doppelt so schwer wie ein Fehlalarm — das System
+wird lieber einmal zu oft laut. Anpassungen sind gedämpft (35% pro Lauf) und
+begrenzt (Gewicht 0,7–2,0×, Schwelle ±15 Punkte). Behördliche Warnungen und
+Strahlungsalarme werden nie gedämpft, nur empfindlicher.
 
 ## Weitere verfügbare Endpunkte (aktuell nicht von der App genutzt)
 

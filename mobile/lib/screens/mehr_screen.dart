@@ -8,6 +8,8 @@ import 'einstellungen_screen.dart';
 import 'schwellenwerte_screen.dart';
 import 'warnungen_screen.dart';
 import 'news_screen.dart';
+import 'einsatz_melden_screen.dart';
+import 'lernstatus_screen.dart';
 
 class MehrScreen extends StatelessWidget {
   const MehrScreen({super.key});
@@ -19,6 +21,26 @@ class MehrScreen extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        const SizedBox(height: 8),
+        _menuItem(
+          context,
+          icon: Icons.local_shipping,
+          label: 'Einsatz melden',
+          subtitle: 'Auch Einsätze ohne vorherigen Alarm',
+          highlight: true,
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const EinsatzMeldenScreen(),
+          )),
+        ),
+        _menuItem(
+          context,
+          icon: Icons.school,
+          label: 'Lernstatus',
+          subtitle: 'Treffsicherheit und gelernte Anpassungen',
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const LernstatusScreen(),
+          )),
+        ),
         const SizedBox(height: 8),
         _menuItem(
           context,
@@ -100,6 +122,7 @@ class MehrScreen extends StatelessWidget {
     required String label,
     required String subtitle,
     required VoidCallback onTap,
+    bool highlight = false,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -113,7 +136,11 @@ class MehrScreen extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(
+                color: highlight
+                    ? AppColors.drkRed.withValues(alpha: 0.45)
+                    : AppColors.border,
+              ),
             ),
             child: Row(
               children: [

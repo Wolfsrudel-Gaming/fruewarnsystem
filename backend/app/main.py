@@ -86,6 +86,17 @@ async def send_daily():
         logger.error(f"Daily report failed: {e}")
 
 
+async def recompute_learning():
+    """Kalibrierung aus den Einsatz-Rueckmeldungen fortschreiben."""
+    try:
+        from app.services.learning.calibration import recompute_calibration
+        results = await recompute_calibration()
+        if results:
+            logger.info(f"Kalibrierung aktualisiert: {len(results)} Kategorien")
+    except Exception as e:
+        logger.error(f"Kalibrierung fehlgeschlagen: {e}", exc_info=True)
+
+
 def _serialize_scores(scores: dict) -> dict:
     result = {}
     for key, val in scores.items():
@@ -161,6 +172,8 @@ async def lifespan(app: FastAPI):
         )
 
     scheduler.add_job(send_daily, "cron", hour=6, minute=0, id="daily_report", replace_existing=True)
+    scheduler.add_job(recompute_learning, "cron", hour=3, minute=30,
+                      id="calibration", replace_existing=True)
 
     scheduler.start()
     logger.info("Scheduler started with all collectors")

@@ -7,7 +7,15 @@ class AlertCard extends StatelessWidget {
   final AlertData alert;
   final VoidCallback? onAcknowledge;
 
-  const AlertCard({super.key, required this.alert, this.onAcknowledge});
+  /// Gesetzt, wenn zu diesem Alarm noch die Einsatz-Rückmeldung fehlt.
+  final VoidCallback? onFeedback;
+
+  const AlertCard({
+    super.key,
+    required this.alert,
+    this.onAcknowledge,
+    this.onFeedback,
+  });
 
   IconData get _icon => categoryByKey(alert.category).icon;
 
@@ -105,13 +113,13 @@ class AlertCard extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (alert.acknowledged)
-                Row(
+              if (alert.acknowledged && onFeedback == null)
+                const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.check_circle, size: 14, color: AppColors.green),
-                    const SizedBox(width: 4),
-                    const Text(
+                    SizedBox(width: 4),
+                    Text(
                       'Quittiert',
                       style: TextStyle(color: AppColors.green, fontSize: 11),
                     ),
@@ -119,6 +127,38 @@ class AlertCard extends StatelessWidget {
                 ),
             ],
           ),
+          if (onFeedback != null) ...[
+            const SizedBox(height: 10),
+            const Divider(color: AppColors.border, height: 1),
+            const SizedBox(height: 10),
+            GestureDetector(
+              onTap: onFeedback,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppColors.orange.withValues(alpha: 0.35)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.help_outline, size: 16, color: AppColors.orange),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Kam es zum Einsatz? Rückmeldung geben',
+                        style: TextStyle(
+                            color: AppColors.orange,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, size: 16, color: AppColors.orange),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

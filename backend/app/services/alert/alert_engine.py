@@ -42,6 +42,10 @@ def _contrib(source: str, source_type: str, value, points: float, reason: str, t
 
 async def calculate_risk_scores() -> dict:
     scores = {}
+    # Gelernte Gewichtung aus den Einsatz-Rueckmeldungen
+    from app.services.learning.calibration import get_calibration_map
+    calibration = await get_calibration_map()
+
     async with async_session() as session:
         scores["water"] = await _calc_water_score(session)
         scores["weather"] = await _calc_weather_score(session)
@@ -56,6 +60,20 @@ async def calculate_risk_scores() -> dict:
         scores["power"] = await _calc_power_score(session)
         scores["events"] = await _calc_events_score(session)
         scores["shipping"] = await _calc_shipping_score(session)
+
+        # Gelernte Multiplikatoren auf die Basisgewichte anwenden. Das
+        # Basisgewicht bleibt als base_weight sichtbar, damit im Dashboard
+        # nachvollziehbar ist, was das System gelernt hat.
+        for cat_name, cat_data in scores.items():
+            cal = calibration.get(cat_name)
+            if not cal:
+                continue
+            multiplier = cal.get("multiplier", 1.0)
+            if multiplier != 1.0:
+                base = cat_data.get("weight", 1.0)
+                cat_data["base_weight"] = base
+                cat_data["weight"] = round(base * multiplier, 3)
+                cat_data["calibration_multiplier"] = multiplier
 
         total = sum(s["score"] * s.get("weight", 1.0) for s in scores.values())
         total_weight = sum(s.get("weight", 1.0) for s in scores.values())
@@ -93,6 +111,9 @@ async def calculate_risk_scores() -> dict:
 
 async def check_thresholds_and_alert(scores: dict):
     new_alerts = []
+    from app.services.learning.calibration import get_calibration_map
+    calibration = await get_calibration_map()
+
     async with async_session() as session:
         stmt = select(AlertThreshold).where(AlertThreshold.is_enabled == True)
         result = await session.execute(stmt)
@@ -106,7 +127,12 @@ async def check_thresholds_and_alert(scores: dict):
             score_data = scores[cat]
             current_score = score_data["score"]
             condition = threshold.condition or {}
-            min_score = condition.get("min_score", 50)
+            configured_min = condition.get("min_score", 50)
+
+            # Gelernter Offset: negativ = frueher warnen, positiv = zurueckhaltender.
+            # Auf 5..95 begrenzt, damit eine Kategorie weder dauerfeuert noch verstummt.
+            offset = calibration.get(cat, {}).get("offset", 0.0)
+            min_score = max(5.0, min(95.0, configured_min + offset))
 
             required_type = condition.get("type")
             if required_type:
@@ -127,11 +153,19 @@ async def check_thresholds_and_alert(scores: dict):
                 if existing.scalar_one_or_none():
                     continue
 
+                threshold_note = f"Schwellenwert {min_score:.0f} überschritten. Aktueller Score: {current_score:.1f}"
+                if abs(min_score - configured_min) >= 0.5:
+                    direction = "gesenkt" if min_score < configured_min else "angehoben"
+                    threshold_note += (
+                        f" (Schwelle aus Einsatz-Rückmeldungen von {configured_min:.0f} "
+                        f"auf {min_score:.0f} {direction})"
+                    )
+
                 alert = Alert(
                     category=threshold.category,
                     score=current_score,
                     title=f"{threshold.name}: Score {current_score:.0f}/100",
-                    description=f"Schwellenwert {min_score} überschritten. Aktueller Score: {current_score:.1f}",
+                    description=threshold_note,
                     source_data=scores[cat],
                     threshold_config=threshold.condition,
                     is_active=True,

@@ -20,6 +20,10 @@ class AppState extends ChangeNotifier {
   List<Map<String, dynamic>> thresholds = [];
   Map<String, dynamic>? liveScoring;
 
+  /// Quittierte Alarme, zu denen noch eine Einsatz-Rückmeldung fehlt.
+  /// Diese Rückmeldungen sind die Lernquelle des Systems.
+  List<AlertData> pendingFeedback = [];
+
   bool loading = true;
   String? error;
   bool wsConnected = false;
@@ -84,6 +88,7 @@ class AppState extends ChangeNotifier {
         api.fetchThresholds(),
         api.fetchOfficialWarnings(),
         api.fetchAirQuality(),
+        api.fetchPendingFeedback(),
       ]);
 
       overview = results[0] as OverviewData?;
@@ -95,6 +100,7 @@ class AppState extends ChangeNotifier {
       thresholds = results[6] as List<Map<String, dynamic>>? ?? [];
       officialWarnings = results[7] as List<OfficialWarningData>? ?? [];
       airQuality = results[8] as List<AirQualityReading>? ?? [];
+      pendingFeedback = results[9] as List<AlertData>? ?? [];
       error = overview == null ? 'Verbindung fehlgeschlagen' : null;
 
       // Fallback: Kritische Alarme auch ohne WS-Event erkennen (z.B. App
@@ -122,6 +128,31 @@ class AppState extends ChangeNotifier {
   Future<void> fetchScoring() async {
     liveScoring = await api.fetchLiveScoring();
     notifyListeners();
+  }
+
+  /// Rückmeldung abgeben — das System lernt daraus.
+  Future<bool> submitFeedback({
+    required int alertId,
+    required FeedbackOutcome outcome,
+    String? deploymentType,
+    int? forcesCount,
+    int? severityRating,
+    String? notes,
+  }) async {
+    final ok = await api.submitFeedback(
+      alertId: alertId,
+      outcome: outcome,
+      deploymentType: deploymentType,
+      forcesCount: forcesCount,
+      severityRating: severityRating,
+      notes: notes,
+    );
+    if (ok) {
+      pendingFeedback.removeWhere((a) => a.id == alertId);
+      notifyListeners();
+      await refreshAll();
+    }
+    return ok;
   }
 
   @override

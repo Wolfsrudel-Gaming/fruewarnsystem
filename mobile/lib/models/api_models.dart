@@ -391,3 +391,153 @@ class TrafficEventData {
     );
   }
 }
+
+/// Ergebnis einer Alarm-Rückmeldung — muss zum Backend-Enum passen.
+enum FeedbackOutcome {
+  einsatz('einsatz', 'Einsatz erfolgt', 'Der Alarm war berechtigt'),
+  vorsorge('vorsorge', 'Vorsorge berechtigt', 'Kein Einsatz, aber Warnung war richtig'),
+  keinEinsatz('kein_einsatz', 'Fehlalarm', 'Es passierte nichts'),
+  unklar('unklar', 'Unklar', 'Nicht bewertbar');
+
+  final String apiValue;
+  final String label;
+  final String description;
+  const FeedbackOutcome(this.apiValue, this.label, this.description);
+}
+
+class DeploymentData {
+  final int id;
+  final String category;
+  final String categoryLabel;
+  final String title;
+  final String? description;
+  final String? occurredAt;
+  final int? forcesCount;
+  final int? severityRating;
+  final bool wasPredicted;
+  final int? matchedAlertId;
+
+  DeploymentData({
+    required this.id,
+    required this.category,
+    required this.categoryLabel,
+    required this.title,
+    this.description,
+    this.occurredAt,
+    this.forcesCount,
+    this.severityRating,
+    required this.wasPredicted,
+    this.matchedAlertId,
+  });
+
+  factory DeploymentData.fromJson(Map<String, dynamic> json) {
+    return DeploymentData(
+      id: json['id'] as int? ?? 0,
+      category: json['category'] as String? ?? '',
+      categoryLabel: json['category_label'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      description: json['description'] as String?,
+      occurredAt: json['occurred_at'] as String?,
+      forcesCount: json['forces_count'] as int?,
+      severityRating: json['severity_rating'] as int?,
+      wasPredicted: json['was_predicted'] as bool? ?? false,
+      matchedAlertId: json['matched_alert_id'] as int?,
+    );
+  }
+}
+
+/// Lernstatus einer einzelnen Kategorie
+class CategoryCalibration {
+  final String category;
+  final String categoryLabel;
+  final double weightMultiplier;
+  final double thresholdOffset;
+  final double? precision;
+  final double? recall;
+  final int truePositives;
+  final int partialPositives;
+  final int falsePositives;
+  final int falseNegatives;
+  final int sampleCount;
+  final bool isLocked;
+  final String? reason;
+
+  CategoryCalibration({
+    required this.category,
+    required this.categoryLabel,
+    required this.weightMultiplier,
+    required this.thresholdOffset,
+    this.precision,
+    this.recall,
+    required this.truePositives,
+    required this.partialPositives,
+    required this.falsePositives,
+    required this.falseNegatives,
+    required this.sampleCount,
+    required this.isLocked,
+    this.reason,
+  });
+
+  factory CategoryCalibration.fromJson(Map<String, dynamic> json) {
+    return CategoryCalibration(
+      category: json['category'] as String? ?? '',
+      categoryLabel: json['category_label'] as String? ?? '',
+      weightMultiplier: (json['weight_multiplier'] as num?)?.toDouble() ?? 1.0,
+      thresholdOffset: (json['threshold_offset'] as num?)?.toDouble() ?? 0.0,
+      precision: (json['precision'] as num?)?.toDouble(),
+      recall: (json['recall'] as num?)?.toDouble(),
+      truePositives: json['true_positives'] as int? ?? 0,
+      partialPositives: json['partial_positives'] as int? ?? 0,
+      falsePositives: json['false_positives'] as int? ?? 0,
+      falseNegatives: json['false_negatives'] as int? ?? 0,
+      sampleCount: json['sample_count'] as int? ?? 0,
+      isLocked: json['is_locked'] as bool? ?? false,
+      reason: json['reason'] as String?,
+    );
+  }
+}
+
+/// Gesamtbild der Systemgüte
+class CalibrationReport {
+  final double? precision;
+  final double? recall;
+  final int truePositives;
+  final int falsePositives;
+  final int falseNegatives;
+  final int sampleCount;
+  final String maturity;
+  final List<CategoryCalibration> categories;
+  final double targetPrecision;
+  final double targetRecall;
+
+  CalibrationReport({
+    this.precision,
+    this.recall,
+    required this.truePositives,
+    required this.falsePositives,
+    required this.falseNegatives,
+    required this.sampleCount,
+    required this.maturity,
+    required this.categories,
+    required this.targetPrecision,
+    required this.targetRecall,
+  });
+
+  factory CalibrationReport.fromJson(Map<String, dynamic> json) {
+    final overall = json['overall'] as Map<String, dynamic>? ?? {};
+    return CalibrationReport(
+      precision: (overall['precision'] as num?)?.toDouble(),
+      recall: (overall['recall'] as num?)?.toDouble(),
+      truePositives: overall['true_positives'] as int? ?? 0,
+      falsePositives: overall['false_positives'] as int? ?? 0,
+      falseNegatives: overall['false_negatives'] as int? ?? 0,
+      sampleCount: overall['sample_count'] as int? ?? 0,
+      maturity: overall['maturity'] as String? ?? '',
+      categories: (json['categories'] as List? ?? [])
+          .map((c) => CategoryCalibration.fromJson(c as Map<String, dynamic>))
+          .toList(),
+      targetPrecision: (json['target_precision'] as num?)?.toDouble() ?? 0.6,
+      targetRecall: (json['target_recall'] as num?)?.toDouble() ?? 0.85,
+    );
+  }
+}

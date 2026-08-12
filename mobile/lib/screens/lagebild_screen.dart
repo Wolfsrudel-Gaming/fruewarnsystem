@@ -7,6 +7,7 @@ import '../widgets/risk_gauge.dart';
 import '../widgets/category_card.dart';
 import 'kategorie_detail_screen.dart';
 import 'warnungen_screen.dart';
+import 'lernstatus_screen.dart';
 
 class LagebildScreen extends StatelessWidget {
   const LagebildScreen({super.key});
@@ -89,6 +90,20 @@ class LagebildScreen extends StatelessWidget {
                     icon: Icons.campaign,
                     text: '${state.officialWarnings.length} behördliche Warnung${state.officialWarnings.length == 1 ? '' : 'en'} (NINA)',
                     color: AppColors.orange,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              if (state.pendingFeedback.isNotEmpty) ...[
+                GestureDetector(
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const LernstatusScreen(),
+                  )),
+                  child: _banner(
+                    icon: Icons.help_outline,
+                    text: '${state.pendingFeedback.length} Alarm'
+                        '${state.pendingFeedback.length == 1 ? '' : 'e'} ohne Rückmeldung',
+                    color: AppColors.purpleLight,
                   ),
                 ),
                 const SizedBox(height: 10),

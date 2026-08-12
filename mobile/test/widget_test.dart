@@ -51,6 +51,66 @@ void main() {
     expect(data.activeAlerts.first.escalationLevel, 2);
   });
 
+  test('FeedbackOutcome values match backend enum', () {
+    expect(FeedbackOutcome.einsatz.apiValue, 'einsatz');
+    expect(FeedbackOutcome.vorsorge.apiValue, 'vorsorge');
+    expect(FeedbackOutcome.keinEinsatz.apiValue, 'kein_einsatz');
+    expect(FeedbackOutcome.unklar.apiValue, 'unklar');
+  });
+
+  test('CalibrationReport parses learning status', () {
+    final r = CalibrationReport.fromJson({
+      'overall': {
+        'precision': 0.75,
+        'recall': 0.5,
+        'true_positives': 6,
+        'false_positives': 2,
+        'false_negatives': 6,
+        'sample_count': 14,
+        'maturity': 'Erste Anpassungen aktiv',
+      },
+      'categories': [
+        {
+          'category': 'water',
+          'category_label': 'Hochwasser',
+          'weight_multiplier': 1.35,
+          'threshold_offset': -6.0,
+          'precision': 0.75,
+          'recall': 0.5,
+          'true_positives': 6,
+          'false_negatives': 6,
+          'sample_count': 14,
+          'is_locked': false,
+          'reason': 'Trefferquote unter Ziel',
+        },
+      ],
+      'target_precision': 0.6,
+      'target_recall': 0.85,
+    });
+
+    expect(r.recall, 0.5);
+    expect(r.maturity, 'Erste Anpassungen aktiv');
+    expect(r.categories.length, 1);
+    final water = r.categories.first;
+    expect(water.categoryLabel, 'Hochwasser');
+    // Verpasste Einsaetze -> empfindlicher: Gewicht hoch, Schwelle runter
+    expect(water.weightMultiplier, greaterThan(1.0));
+    expect(water.thresholdOffset, lessThan(0));
+  });
+
+  test('DeploymentData flags unpredicted deployments', () {
+    final d = DeploymentData.fromJson({
+      'id': 3,
+      'category': 'water',
+      'category_label': 'Hochwasser',
+      'title': 'Kellerauspumpen',
+      'occurred_at': '2026-08-11T18:00:00',
+      'was_predicted': false,
+    });
+    expect(d.wasPredicted, false);
+    expect(d.title, 'Kellerauspumpen');
+  });
+
   test('ScoreHistoryPoint parses server history format', () {
     final p = ScoreHistoryPoint.fromJson({
       'category': 'fire',

@@ -127,6 +127,112 @@ class ApiService {
         .toList();
   }
 
+  // --- Lernschleife: Rückmeldungen und Kalibrierung ---
+
+  /// Rückmeldung zu einem Alarm: kam es zum Einsatz?
+  Future<bool> submitFeedback({
+    required int alertId,
+    required FeedbackOutcome outcome,
+    String? deploymentType,
+    int? forcesCount,
+    int? severityRating,
+    String? notes,
+    String? reportedBy,
+  }) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$baseUrl/api/dashboard/alerts/$alertId/feedback'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'outcome': outcome.apiValue,
+          if (deploymentType != null) 'deployment_type': deploymentType,
+          if (forcesCount != null) 'forces_count': forcesCount,
+          if (severityRating != null) 'severity_rating': severityRating,
+          if (notes != null) 'notes': notes,
+          if (reportedBy != null) 'reported_by': reportedBy,
+        }),
+      ).timeout(const Duration(seconds: 15));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Alarme, zu denen noch eine Rückmeldung fehlt
+  Future<List<AlertData>> fetchPendingFeedback() async {
+    final data = await _getJson('/api/dashboard/alerts/pending-feedback');
+    if (data == null) return [];
+    return (data['alerts'] as List? ?? [])
+        .map((a) => AlertData.fromJson(a as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Einsatz melden — auch nachträglich und ohne vorherigen Alarm
+  Future<Map<String, dynamic>?> logDeployment({
+    required String category,
+    required String title,
+    String? description,
+    DateTime? occurredAt,
+    int? forcesCount,
+    int? severityRating,
+    String? reportedBy,
+  }) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$baseUrl/api/dashboard/deployments'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'category': category,
+          'title': title,
+          if (description != null) 'description': description,
+          if (occurredAt != null) 'occurred_at': occurredAt.toUtc().toIso8601String(),
+          if (forcesCount != null) 'forces_count': forcesCount,
+          if (severityRating != null) 'severity_rating': severityRating,
+          if (reportedBy != null) 'reported_by': reportedBy,
+        }),
+      ).timeout(const Duration(seconds: 15));
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<List<DeploymentData>> fetchDeployments({int days = 180}) async {
+    final data = await _getJson('/api/dashboard/deployments?days=$days');
+    if (data == null) return [];
+    return (data['deployments'] as List? ?? [])
+        .map((d) => DeploymentData.fromJson(d as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<bool> deleteDeployment(int id) async {
+    try {
+      final resp = await http
+          .delete(Uri.parse('$baseUrl/api/dashboard/deployments/$id'))
+          .timeout(const Duration(seconds: 10));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<CalibrationReport?> fetchCalibration() async {
+    final data = await _getJson('/api/dashboard/calibration');
+    return data != null ? CalibrationReport.fromJson(data) : null;
+  }
+
+  Future<bool> recomputeCalibration() async {
+    try {
+      final resp = await http
+          .post(Uri.parse('$baseUrl/api/dashboard/calibration/recompute'))
+          .timeout(const Duration(seconds: 60));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<SituationReport?> fetchReport() async {
     // Der LLM-Report kann dauern — grosszuegiger Timeout.
     try {
