@@ -657,3 +657,83 @@ class PowerDetail {
     );
   }
 }
+
+/// Konkreter Stromausfall aus der Störungsauskunft der Netzbetreiber
+class PowerOutageData {
+  final int id;
+  /// "confirmed" = vom Netzbetreiber bestätigt, "reported" = Bürgermeldungen
+  final String kind;
+  final String? operatorName;
+  final String? postalCode;
+  final String? city;
+  final String? street;
+  final double? lat;
+  final double? lon;
+  final double? distanceKm;
+  final int reportCount;
+  final String? startedAt;
+  final String? expectedEnd;
+  final String? info;
+
+  PowerOutageData({
+    required this.id,
+    required this.kind,
+    this.operatorName,
+    this.postalCode,
+    this.city,
+    this.street,
+    this.lat,
+    this.lon,
+    this.distanceKm,
+    this.reportCount = 1,
+    this.startedAt,
+    this.expectedEnd,
+    this.info,
+  });
+
+  bool get isConfirmed => kind == 'confirmed';
+
+  factory PowerOutageData.fromJson(Map<String, dynamic> json) {
+    return PowerOutageData(
+      id: json['id'] as int? ?? 0,
+      kind: json['kind'] as String? ?? 'confirmed',
+      operatorName: json['operator_name'] as String?,
+      postalCode: json['postal_code'] as String?,
+      city: json['city'] as String?,
+      street: json['street'] as String?,
+      lat: (json['lat'] as num?)?.toDouble(),
+      lon: (json['lon'] as num?)?.toDouble(),
+      distanceKm: (json['distance_km'] as num?)?.toDouble(),
+      reportCount: json['report_count'] as int? ?? 1,
+      startedAt: json['started_at'] as String?,
+      expectedEnd: json['expected_end'] as String?,
+      info: json['info'] as String?,
+    );
+  }
+}
+
+class PowerOutageReport {
+  final List<PowerOutageData> confirmed;
+  final List<PowerOutageData> reported;
+  final double? nearestKm;
+
+  PowerOutageReport({
+    required this.confirmed,
+    required this.reported,
+    this.nearestKm,
+  });
+
+  bool get isEmpty => confirmed.isEmpty && reported.isEmpty;
+  List<PowerOutageData> get all => [...confirmed, ...reported];
+
+  factory PowerOutageReport.fromJson(Map<String, dynamic> json) {
+    List<PowerOutageData> parse(String key) => (json[key] as List? ?? [])
+        .map((o) => PowerOutageData.fromJson(o as Map<String, dynamic>))
+        .toList();
+    return PowerOutageReport(
+      confirmed: parse('confirmed'),
+      reported: parse('reported'),
+      nearestKm: (json['nearest_km'] as num?)?.toDouble(),
+    );
+  }
+}

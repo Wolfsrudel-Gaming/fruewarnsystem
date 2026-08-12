@@ -10,7 +10,7 @@ from app.models.schemas import (
     Alert, AlertCategory, AlertThreshold, RiskScore,
     WaterLevel, WeatherData, FireRisk, AirQuality, NewsItem,
     OfficialWarning, TrafficEvent, EarthquakeEvent, RadiationReading,
-    ICUCapacity, GridStatus, RiverShippingWarning, EventCalendar,
+    ICUCapacity, GridStatus, RiverShippingWarning, EventCalendar, PowerOutage,
 )
 
 logger = logging.getLogger(__name__)
@@ -840,66 +840,136 @@ async def _calc_health_score(session) -> dict:
 
 
 async def _calc_power_score(session) -> dict:
+    """Bewertet die Stromlage.
+
+    Massgeblich sind konkrete Ausfaelle in der Region — die bundesweite
+    Erzeugungsbilanz sagt nichts darueber aus, ob in Troisdorf das Licht
+    ausgeht, und geht nur noch als gedeckelter Nebenaspekt ein.
+    """
+    contributions = []
+    outage_score = 0
+    outage_detail = None
+
+    # --- Konkrete Stromausfaelle (Hauptsignal) ---
+    outages = (await session.execute(
+        select(PowerOutage)
+        .where(PowerOutage.is_active == True)
+        .order_by(PowerOutage.distance_km)
+    )).scalars().all()
+
+    confirmed = [o for o in outages if o.kind == "confirmed"]
+    reported = [o for o in outages if o.kind == "reported"]
+
+    for o in outages:
+        d = o.distance_km if o.distance_km is not None else 999
+        if d <= 5:
+            base = 95
+        elif d <= 15:
+            base = 80
+        elif d <= 30:
+            base = 55
+        elif d <= 60:
+            base = 30
+        else:
+            continue
+
+        if o.kind == "confirmed":
+            score = base
+            quelle = f"Netzbetreiber {o.operator_name or 'unbekannt'}"
+            grund = f"Bestaetigter Stromausfall in {o.city or o.postal_code or 'der Region'}"
+            if o.expected_end:
+                grund += f", voraussichtlich bis {o.expected_end.strftime('%H:%M')}"
+        else:
+            # Buergermeldungen sind ein frueher, aber unsicherer Hinweis.
+            # Viele Meldungen erhoehen die Verlaesslichkeit.
+            confidence = min(1.0, 0.4 + 0.1 * (o.report_count or 1))
+            score = base * confidence * 0.7
+            quelle = "Buergermeldungen (unbestaetigt)"
+            grund = (f"{o.report_count} Meldungen aus {o.city or 'der Region'} — "
+                     f"vom Netzbetreiber noch nicht bestaetigt")
+
+        contributions.append(_contrib(
+            source=quelle,
+            source_type="power_outage",
+            value=f"{d:.0f} km entfernt",
+            points=score,
+            reason=grund,
+            ts=o.started_at,
+        ))
+        outage_score = max(outage_score, score)
+
+    if confirmed:
+        nearest = min((o.distance_km or 999) for o in confirmed)
+        outage_detail = f"{len(confirmed)} bestaetigte Stromausfaelle, naechster {nearest:.0f} km"
+    elif reported:
+        nearest = min((o.distance_km or 999) for o in reported)
+        outage_detail = f"{len(reported)} unbestaetigte Meldungscluster, naechster {nearest:.0f} km"
+
+    # --- Bundesweite Netzbilanz (Nebenaspekt, gedeckelt) ---
     cutoff = datetime.utcnow() - timedelta(hours=6)
-    stmt = (
+    readings = (await session.execute(
         select(GridStatus)
         .where(GridStatus.created_at > cutoff)
         .order_by(GridStatus.created_at.desc())
         .limit(5)
-    )
-    result = await session.execute(stmt)
-    readings = result.scalars().all()
+    )).scalars().all()
 
-    if not readings:
-        return {"score": 0, "weight": 0.7, "detail": "Keine Daten", "contributions": []}
-
-    contributions = []
-    stressed = [r for r in readings if r.is_stressed]
-
-    for r in stressed:
+    grid_score = 0
+    for r in [x for x in readings if x.is_stressed]:
         balance = r.balance_mw or 0
         consumption = r.consumption_mw or 0
-
-        # Bewertet wird der Importanteil an der Netzlast, nicht der Rohsaldo:
-        # Deutschland importiert im Verbundnetz routinemaessig Strom, ein
-        # negativer Saldo allein ist kein Warnsignal.
         if consumption <= 0 or balance >= 0:
             continue
         import_share = -balance / consumption
 
         if import_share >= 0.30:
-            score = 85
+            score = 40
         elif import_share >= 0.25:
-            score = 65
+            score = 30
         elif import_share >= 0.20:
-            score = 45
+            score = 20
         else:
-            score = 25
+            score = 12
 
         contributions.append(_contrib(
             source=f"SMARD Bundesnetzagentur - {r.region}",
             source_type="grid",
             value=f"Import {abs(balance):.0f} MW ({import_share:.0%} der Netzlast)",
             points=score,
-            reason=r.stress_indicator or "Erhoehter Importbedarf",
+            reason=(r.stress_indicator or "Erhoehter Importbedarf")
+                   + " (bundesweit, kein lokaler Ausfall)",
             ts=r.timestamp,
         ))
+        grid_score = max(grid_score, score)
 
-    best = max((c["points"] for c in contributions), default=0)
-    latest = readings[0]
-    if stressed:
-        detail = f"Netzstress: {len(stressed)} Meldungen"
-    elif latest.balance_mw is None:
-        detail = "Keine Daten"
-    elif latest.balance_mw >= 0:
-        detail = f"Erzeugungsueberschuss {latest.balance_mw:.0f} MW"
+    total = max(outage_score, grid_score)
+
+    if outage_detail:
+        detail = outage_detail
+        primary = "outage" if confirmed else "outage_unconfirmed"
+    elif grid_score:
+        detail = "Bundesweit erhoehter Importbedarf"
+        primary = "grid_stress"
+    elif readings:
+        latest = readings[0]
+        if latest.balance_mw is None:
+            detail = "Keine Ausfaelle gemeldet"
+        elif latest.balance_mw >= 0:
+            detail = f"Keine Ausfaelle, Erzeugungsueberschuss {latest.balance_mw:.0f} MW"
+        else:
+            detail = f"Keine Ausfaelle, Import {abs(latest.balance_mw):.0f} MW (Normalbetrieb)"
+        primary = "normal"
     else:
-        detail = f"Import {abs(latest.balance_mw):.0f} MW (Normalbetrieb)"
+        detail = "Keine Daten"
+        primary = "normal"
 
     return {
-        "score": min(100, best),
+        "score": min(100, total),
         "weight": 0.7,
         "detail": detail,
+        "primary_condition": primary,
+        "confirmed_outages": len(confirmed),
+        "reported_clusters": len(reported),
         "contributions": contributions,
     }
 
@@ -977,10 +1047,15 @@ async def _calc_shipping_score(session) -> dict:
 
 
 async def seed_default_thresholds():
+    """Legt fehlende Standard-Schwellenwerte an.
+
+    Frueher brach die Funktion ab, sobald ueberhaupt Schwellen existierten —
+    neu hinzugekommene Standards erreichten damit keine laufende Installation.
+    Jetzt wird je (Kategorie, Name) ergaenzt, Bestehendes bleibt unangetastet.
+    """
     async with async_session() as session:
-        existing = await session.execute(select(func.count(AlertThreshold.id)))
-        if existing.scalar() > 0:
-            return
+        existing_rows = (await session.execute(select(AlertThreshold))).scalars().all()
+        known = {(t.category, t.name) for t in existing_rows}
 
         defaults = [
             AlertThreshold(
@@ -1057,10 +1132,26 @@ async def seed_default_thresholds():
             ),
             AlertThreshold(
                 category=AlertCategory.POWER,
-                name="Stromnetz-Belastung",
-                condition={"min_score": 60},
-                score_contribution=20,
+                name="Stromausfall in der Region",
+                condition={"min_score": 50, "type": "outage"},
+                score_contribution=30,
                 notification_channels=["push", "telegram"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.POWER,
+                name="Moeglicher Stromausfall (unbestaetigt)",
+                condition={"min_score": 40, "type": "outage_unconfirmed"},
+                score_contribution=15,
+                notification_channels=["push"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.POWER,
+                name="Stromnetz-Belastung (bundesweit)",
+                condition={"min_score": 60, "type": "grid_stress"},
+                score_contribution=10,
+                notification_channels=["push"],
                 is_enabled=True,
             ),
             AlertThreshold(
@@ -1080,7 +1171,13 @@ async def seed_default_thresholds():
                 is_enabled=True,
             ),
         ]
+        added = 0
         for t in defaults:
+            if (t.category, t.name) in known:
+                continue
             session.add(t)
-        await session.commit()
-        logger.info("Seeded default alert thresholds")
+            added += 1
+
+        if added:
+            await session.commit()
+            logger.info("Alert-Schwellenwerte ergaenzt: %s neu", added)

@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     interval_radiation: int = 1800
     interval_icu: int = 3600
     interval_grid: int = 900
+    # Stoerungsauskunft empfiehlt mind. 5 Minuten Abstand
+    interval_power_outage: int = 300
     interval_shipping: int = 1800
     interval_transit: int = 600
     interval_fuel: int = 1800

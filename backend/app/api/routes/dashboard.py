@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
 from app.models.schemas import (
-    AlertFeedback, Deployment, CategoryCalibration, FeedbackOutcome,
+    AlertFeedback, Deployment, CategoryCalibration, FeedbackOutcome, PowerOutage,
     WaterLevel, WeatherData, FireRisk, AirQuality, NewsItem,
     OfficialWarning, TrafficEvent, EventCalendar, Alert,
     RiskScore, AlertCategory, AlertThreshold, LightningData,
@@ -1150,4 +1150,55 @@ async def get_power_detail(
             "Netzstress wird nur bundesweit bewertet — eine einzelne Regelzone "
             "hat keine eigene Bilanz."
         ),
+    }
+
+
+@router.get("/outages")
+async def get_power_outages(
+    include_resolved: bool = Query(False),
+    max_distance_km: float = Query(60.0, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Konkrete Stromausfälle in der Region (Störungsauskunft der Netzbetreiber).
+
+    Zwei Verlässlichkeitsstufen: `confirmed` sind vom Netzbetreiber bestätigte
+    Störungen, `reported` sind gebündelte Bürgermeldungen — früher da, aber
+    noch unbestätigt.
+    """
+    stmt = select(PowerOutage).where(PowerOutage.distance_km <= max_distance_km)
+    if not include_resolved:
+        stmt = stmt.where(PowerOutage.is_active == True)
+    rows = (await db.execute(stmt.order_by(PowerOutage.distance_km))).scalars().all()
+
+    def serialize(o):
+        return {
+            "id": o.id,
+            "kind": o.kind,
+            "operator_name": o.operator_name,
+            "postal_code": o.postal_code,
+            "city": o.city,
+            "district": o.district,
+            "street": o.street,
+            "lat": o.lat,
+            "lon": o.lon,
+            "distance_km": o.distance_km,
+            "report_count": o.report_count,
+            "started_at": o.started_at.isoformat() if o.started_at else None,
+            "expected_end": o.expected_end.isoformat() if o.expected_end else None,
+            "is_active": o.is_active,
+            "is_fixed": o.is_fixed,
+            "info": o.info,
+            "source": o.source,
+        }
+
+    confirmed = [o for o in rows if o.kind == "confirmed"]
+    reported = [o for o in rows if o.kind == "reported"]
+
+    return {
+        "confirmed": [serialize(o) for o in confirmed],
+        "reported": [serialize(o) for o in reported],
+        "count_confirmed": len(confirmed),
+        "count_reported": len(reported),
+        "nearest_km": min((o.distance_km for o in rows if o.distance_km is not None), default=None),
+        "source": "Störungsauskunft der Verteilnetzbetreiber",
     }

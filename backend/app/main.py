@@ -32,6 +32,7 @@ from app.collectors.seismic.earthquake_collector import collect_earthquakes
 from app.collectors.radiation.bfs_collector import collect_radiation
 from app.collectors.health.divi_collector import collect_icu_capacity
 from app.collectors.power.grid_collector import collect_grid_status
+from app.collectors.power.outage_collector import collect_power_outages
 from app.collectors.events.event_collector import collect_events
 from app.collectors.shipping.rhine_collector import collect_shipping_warnings
 from app.collectors.transit.vrs_collector import collect_transit_disruptions
@@ -145,6 +146,9 @@ async def lifespan(app: FastAPI):
                       args=["icu", collect_icu_capacity], id="icu", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_grid,
                       args=["grid", collect_grid_status], id="grid", replace_existing=True)
+    scheduler.add_job(run_collector, "interval", seconds=settings.interval_power_outage,
+                      args=["power_outage", collect_power_outages], id="power_outage",
+                      replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_events,
                       args=["events", collect_events], id="events", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_shipping,
@@ -181,6 +185,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(run_collector("initial_warnings", collect_official_warnings))
     asyncio.create_task(run_collector("initial_weather", collect_dwd_warnings))
     asyncio.create_task(run_collector("initial_water", collect_water_levels))
+    asyncio.create_task(run_collector("initial_outages", collect_power_outages))
 
     yield
 

@@ -527,3 +527,41 @@ class CategoryCalibration(Base):
     is_locked = Column(Boolean, default=False)  # Manuell fixiert, kein Auto-Lernen
     last_adjustment_reason = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class PowerOutage(Base):
+    """Konkreter Stromausfall aus der Stoerungsauskunft der Netzbetreiber.
+
+    Zwei Quellen mit unterschiedlicher Verlaesslichkeit:
+      * confirmed  — vom Netzbetreiber gemeldet, belastbar
+      * reported   — Buergermeldung, frueher da, aber einzeln wenig aussagekraeftig
+                     (kann auch eine durchgebrannte Sicherung im Haus sein)
+    """
+    __tablename__ = "power_outages"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    external_id = Column(String(100), index=True)     # id der Quelle
+    kind = Column(String(20), default="confirmed")    # confirmed | reported
+    operator_name = Column(String(200), nullable=True)
+    postal_code = Column(String(20), nullable=True, index=True)
+    city = Column(String(200), nullable=True)
+    district = Column(String(200), nullable=True)
+    street = Column(String(300), nullable=True)
+    lat = Column(Float, nullable=True)
+    lon = Column(Float, nullable=True)
+    distance_km = Column(Float, nullable=True, index=True)
+    radius_m = Column(Float, nullable=True)
+    report_count = Column(Integer, default=1)         # gebuendelte Meldungen
+    started_at = Column(DateTime, nullable=True)
+    expected_end = Column(DateTime, nullable=True)
+    last_update = Column(DateTime, nullable=True)
+    is_fixed = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    info = Column(Text, nullable=True)
+    source = Column(String(100), default="stoerungsauskunft")
+    raw_data = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("ix_outage_active_dist", "is_active", "distance_km"),
+        Index("ix_outage_kind", "kind", "is_active"),
+    )

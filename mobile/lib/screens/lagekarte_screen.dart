@@ -21,6 +21,20 @@ class _LagekarteScreenState extends State<LagekarteScreen> {
 
   bool _showWater = true;
   bool _showTraffic = true;
+  bool _showOutages = true;
+  PowerOutageReport? _outages;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOutages();
+  }
+
+  Future<void> _loadOutages() async {
+    final api = context.read<AppState>().api;
+    final rep = await api.fetchOutages();
+    if (mounted) setState(() => _outages = rep);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +67,10 @@ class _LagekarteScreenState extends State<LagekarteScreen> {
             ...state.trafficEvents
                 .where((e) => _lat(e) != null && _lon(e) != null)
                 .map((e) => _trafficMarker(context, e)),
+          if (_showOutages && _outages != null)
+            ..._outages!.all
+                .where((o) => o.lat != null && o.lon != null)
+                .map((o) => _outageMarker(context, o)),
         ];
 
         return Stack(
@@ -87,6 +105,9 @@ class _LagekarteScreenState extends State<LagekarteScreen> {
                   const SizedBox(width: 8),
                   _filterChip('Verkehr', Icons.traffic, _showTraffic,
                       (v) => setState(() => _showTraffic = v)),
+                  const SizedBox(width: 8),
+                  _filterChip('Strom', Icons.power_off, _showOutages,
+                      (v) => setState(() => _showOutages = v)),
                 ],
               ),
             ),
@@ -171,6 +192,57 @@ class _LagekarteScreenState extends State<LagekarteScreen> {
         ),
       ),
     );
+  }
+
+  Marker _outageMarker(BuildContext context, PowerOutageData o) {
+    // Bestaetigt = rot, Buergermeldung = orange mit gestricheltem Rand
+    final color = o.isConfirmed ? AppColors.red : AppColors.orange;
+    return Marker(
+      point: LatLng(o.lat!, o.lon!),
+      width: 30,
+      height: 30,
+      child: GestureDetector(
+        onTap: () => _showOutageSheet(context, o),
+        child: Container(
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: o.isConfirmed ? Colors.white : Colors.white70,
+              width: o.isConfirmed ? 2 : 1.5,
+            ),
+            boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 4)],
+          ),
+          child: const Icon(Icons.power_off, size: 15, color: Colors.white),
+        ),
+      ),
+    );
+  }
+
+  void _showOutageSheet(BuildContext context, PowerOutageData o) {
+    _showSheet(
+      context,
+      icon: Icons.power_off,
+      iconColor: o.isConfirmed ? AppColors.red : AppColors.orange,
+      title: '${o.postalCode ?? ""} ${o.city ?? "Stromausfall"}'.trim(),
+      subtitle: o.isConfirmed
+          ? 'Bestätigt durch ${o.operatorName ?? "Netzbetreiber"}'
+          : 'Unbestätigt · ${o.reportCount} Bürgermeldungen',
+      rows: [
+        ('Entfernung', '${o.distanceKm?.toStringAsFixed(1) ?? "?"} km'),
+        if (o.street != null) ('Straße', o.street!),
+        if (o.startedAt != null) ('Beginn', _fmt(o.startedAt!)),
+        if (o.expectedEnd != null) ('Voraussichtlich bis', _fmt(o.expectedEnd!)),
+        if (o.info != null) ('Hinweis', o.info!),
+      ],
+    );
+  }
+
+  String _fmt(String iso) {
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return iso;
+    return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')}. '
+        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 
   void _showStationSheet(BuildContext context, WaterStation s) {

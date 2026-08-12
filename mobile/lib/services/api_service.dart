@@ -217,6 +217,12 @@ class ApiService {
     }
   }
 
+  /// Konkrete Stromausfälle in der Region (Störungsauskunft)
+  Future<PowerOutageReport?> fetchOutages() async {
+    final data = await _getJson('/api/dashboard/outages');
+    return data != null ? PowerOutageReport.fromJson(data) : null;
+  }
+
   /// Stromnetz im Detail: Erzeugungsmix, Netzlast, Preis, Prognose
   Future<PowerDetail?> fetchPowerDetail({int hours = 24}) async {
     final data = await _getJson('/api/dashboard/power?hours=$hours');

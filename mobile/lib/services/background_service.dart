@@ -132,6 +132,10 @@ void onStart(ServiceInstance service) async {
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
             if (msg['type'] == 'alert' && msg['alert'] is Map<String, dynamic>) {
               handleAlert(msg['alert'] as Map<String, dynamic>);
+            } else if (msg['type'] == 'update' || msg['type'] == 'score_update') {
+              // Scores haben sich geaendert — koennte ein neuer Alarm sein,
+              // den wir per WS nicht direkt gesehen haben.
+              pollAlerts();
             }
           } catch (_) {}
         },

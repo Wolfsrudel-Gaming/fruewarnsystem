@@ -49,7 +49,9 @@ class AppState extends ChangeNotifier {
     _ws.connect();
     _ws.stream.listen((msg) {
       final type = msg['type'] as String?;
-      if (type == 'update') {
+      // Server nutzt je nach Stand "update" oder "score_update" — beide
+      // akzeptieren, damit die App bei Server-Umbenennungen nicht taub wird.
+      if (type == 'update' || type == 'score_update') {
         // Collector-Lauf abgeschlossen — Scores haben sich evtl. geaendert
         refreshAll();
       } else if (type == 'alert') {

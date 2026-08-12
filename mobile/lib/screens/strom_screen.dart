@@ -18,6 +18,7 @@ class StromScreen extends StatefulWidget {
 
 class _StromScreenState extends State<StromScreen> {
   PowerDetail? _detail;
+  PowerOutageReport? _outages;
   bool _loading = true;
   int _regionIndex = 0;
 
@@ -45,8 +46,16 @@ class _StromScreenState extends State<StromScreen> {
 
   Future<void> _load() async {
     final api = context.read<AppState>().api;
-    final detail = await api.fetchPowerDetail();
-    if (mounted) setState(() { _detail = detail; _loading = false; });
+    final results = await Future.wait([
+      api.fetchPowerDetail(),
+      api.fetchOutages(),
+    ]);
+    if (!mounted) return;
+    setState(() {
+      _detail = results[0] as PowerDetail?;
+      _outages = results[1] as PowerOutageReport?;
+      _loading = false;
+    });
   }
 
   @override
@@ -57,7 +66,14 @@ class _StromScreenState extends State<StromScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: AppColors.drkRed))
           : (_detail == null || _detail!.regions.isEmpty)
-              ? _empty()
+              ? RefreshIndicator(
+                  onRefresh: _load,
+                  color: AppColors.drkRed,
+                  child: ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [_outageCard(), const SizedBox(height: 16), _empty()],
+                  ),
+                )
               : RefreshIndicator(
                   onRefresh: _load,
                   color: AppColors.drkRed,
@@ -137,6 +153,8 @@ class _StromScreenState extends State<StromScreen> {
           const SizedBox(height: 16),
         ],
 
+        _outageCard(),
+        const SizedBox(height: 16),
         _summaryCard(r),
         const SizedBox(height: 16),
         _mixCard(r),
@@ -148,6 +166,135 @@ class _StromScreenState extends State<StromScreen> {
         _sourceNote(r),
         const SizedBox(height: 24),
       ],
+    );
+  }
+
+  /// Konkrete Stromausfälle — das eigentlich einsatzrelevante Signal.
+  /// Steht bewusst ganz oben, vor der bundesweiten Erzeugungsbilanz.
+  Widget _outageCard() {
+    final rep = _outages;
+    if (rep == null) return const SizedBox.shrink();
+
+    if (rep.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.green.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.green.withValues(alpha: 0.3)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.check_circle_outline, size: 20, color: AppColors.green),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Keine gemeldeten Stromausfälle im Umkreis von 60 km',
+                style: TextStyle(color: AppColors.green, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final hasConfirmed = rep.confirmed.isNotEmpty;
+    final color = hasConfirmed ? AppColors.red : AppColors.orange;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(hasConfirmed ? Icons.power_off : Icons.help_outline,
+                  size: 20, color: color),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  hasConfirmed
+                      ? '${rep.confirmed.length} bestätigte${rep.confirmed.length == 1 ? "r" : ""} '
+                          'Stromausfall${rep.confirmed.length == 1 ? "" : "e"}'
+                      : '${rep.reported.length} unbestätigte Meldung'
+                          '${rep.reported.length == 1 ? "" : "en"}',
+                  style: TextStyle(
+                      color: color, fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+              ),
+              if (rep.nearestKm != null)
+                Text('nächster ${rep.nearestKm!.toStringAsFixed(0)} km',
+                    style: TextStyle(color: color, fontSize: 11)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...rep.all.take(6).map(_outageRow),
+          if (rep.all.length > 6)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('… und ${rep.all.length - 6} weitere',
+                  style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _outageRow(PowerOutageData o) {
+    final color = o.isConfirmed ? AppColors.red : AppColors.orange;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 4),
+            width: 8, height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        '${o.postalCode ?? ""} ${o.city ?? "Unbekannt"}'.trim(),
+                        style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text('${o.distanceKm?.toStringAsFixed(0) ?? "?"} km',
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  ],
+                ),
+                Text(
+                  o.isConfirmed
+                      ? [
+                          o.operatorName ?? 'Netzbetreiber',
+                          if (o.expectedEnd != null) 'bis ${_time(o.expectedEnd!)}',
+                        ].join(' · ')
+                      : '${o.reportCount} Bürgermeldungen · noch unbestätigt',
+                  style: TextStyle(color: color, fontSize: 11),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 

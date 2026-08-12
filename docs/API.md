@@ -142,6 +142,52 @@ Jedes Element: `id`, `type`, `region`, `severity`, `title`, `description`,
 
 Antwort: `{ "status": "acknowledged", "id": 1 }`. Unbekannte ID → HTTP 404.
 
+### `GET /api/dashboard/outages` — Konkrete Stromausfälle
+
+Die **einsatzrelevante** Stromquelle: tatsächliche Ausfälle in der Region,
+aus der Störungsauskunft der Verteilnetzbetreiber. Die Stadtwerke Troisdorf
+verweisen für ihr Netzgebiet selbst auf dieses Portal.
+
+Zwei Verlässlichkeitsstufen:
+
+| Feld | Bedeutung |
+|---|---|
+| `confirmed` | Vom Netzbetreiber bestätigte Störung — belastbar |
+| `reported` | Gebündelte Bürgermeldungen — früher da, aber unbestätigt |
+
+Bürgermeldungen werden räumlich geclustert (3 km) und erst ab 3 Meldungen
+berücksichtigt: eine einzelne Meldung kann eine Haussicherung sein. Erfasst
+wird ein Umkreis von 60 km, Abfrage alle 5 Minuten.
+
+```json
+{
+  "confirmed": [
+    { "kind": "confirmed", "operator_name": "Westnetz GmbH",
+      "postal_code": "50259", "city": "Pulheim", "distance_km": 35.3,
+      "lat": 51.0, "lon": 6.8, "started_at": "…", "expected_end": "…" }
+  ],
+  "reported": [
+    { "kind": "reported", "city": "Pulheim", "report_count": 29,
+      "distance_km": 32.0, "info": "29 Bürgermeldungen im Umkreis von 3 km" }
+  ],
+  "nearest_km": 32.0
+}
+```
+
+**Scoring:** Bestätigter Ausfall ≤5 km → 95, ≤15 km → 80, ≤30 km → 55,
+≤60 km → 30. Bürgermeldungen zählen mit 70 % davon, zusätzlich gedämpft nach
+Meldungsanzahl. Die bundesweite SMARD-Bilanz geht nur noch mit maximal 40
+Punkten ein — sie sagt nichts darüber aus, ob lokal der Strom weg ist.
+
+Alarmschwellen: `Stromausfall in der Region` (≥50, Typ `outage`),
+`Möglicher Stromausfall (unbestätigt)` (≥40, Typ `outage_unconfirmed`),
+`Stromnetz-Belastung (bundesweit)` (≥60, Typ `grid_stress`).
+
+> Die genutzte Schnittstelle ist die öffentliche API der Website
+> (Basic-Auth `frontend:frontend` ist eine offene Frontend-Kennung), aber
+> nicht offiziell dokumentiert. Für den Dauerbetrieb sollte beim Betreiber
+> eine Freigabe eingeholt werden.
+
 ### `GET /api/dashboard/power?hours=24` — Stromnetz im Detail
 
 Liefert je Regelzone den aktuellsten Stand plus Verlauf: Erzeugungsmix nach
