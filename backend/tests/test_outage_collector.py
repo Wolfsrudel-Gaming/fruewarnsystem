@@ -114,74 +114,91 @@ def test_cluster_radius_is_local():
 
 
 
-# --- Relevanzzonen: Rhein-Sieg-Kreis vs. Grossereignisse ausserhalb ---------
+# --- Drei Relevanzzonen ----------------------------------------------------
+# Troisdorf: alles | Rhein-Sieg-Kreis: nur Grosslagen | ausserhalb: Extremlagen
 
-def test_troisdorf_is_core():
-    from app.collectors.power.outage_collector import is_core_area
+def test_troisdorf_postal_codes_are_own_zone():
+    from app.collectors.power.outage_collector import ZONE_TROISDORF, zone_of
     for plz in ("53840", "53842", "53844"):
-        assert is_core_area(plz, 0.5) is True
+        assert zone_of(plz, 0.5) == ZONE_TROISDORF
 
 
-def test_rhein_sieg_municipalities_are_core():
-    from app.collectors.power.outage_collector import is_core_area
-    # Quer durch den Kreis, auch die weit entfernten Ecken
+def test_district_municipalities_are_middle_zone():
+    """Siegburg & Co. sind Kreis, nicht Troisdorf — dort zaehlen nur Grosslagen."""
+    from app.collectors.power.outage_collector import ZONE_RHEIN_SIEG, zone_of
     for plz in ("53721", "53757", "53773", "53604", "51570", "53340"):
-        assert is_core_area(plz, 40) is True, f"{plz} gehoert zum Kreis"
+        assert zone_of(plz, 15) == ZONE_RHEIN_SIEG, f"{plz} gehoert zum Kreis"
 
 
-def test_neighbouring_cities_are_not_core():
-    """Koeln, Bonn und Rhein-Erft liegen nicht im Kreis.
-
-    Sie sind trotz geringer Entfernung nur ueber die Grossereignis-Regel
-    relevant — sonst waere jeder Trafoschaden in Porz ein Alarm.
-    """
-    from app.collectors.power.outage_collector import is_core_area
+def test_cities_outside_district_are_outer_zone():
+    """Koeln, Bonn und Rhein-Erft liegen ausserhalb — nur Extremlagen."""
+    from app.collectors.power.outage_collector import ZONE_OUTSIDE, zone_of
     for plz in ("50769", "53111", "50259", "50126"):
-        assert is_core_area(plz, 8) is False
+        assert zone_of(plz, 8) == ZONE_OUTSIDE
 
 
 def test_missing_postal_code_falls_back_to_distance():
     from app.collectors.power.outage_collector import (
-        CORE_FALLBACK_RADIUS_KM, is_core_area,
+        KREIS_FALLBACK_RADIUS_KM, TROISDORF_FALLBACK_RADIUS_KM,
+        ZONE_OUTSIDE, ZONE_RHEIN_SIEG, ZONE_TROISDORF, zone_of,
     )
-    assert is_core_area(None, CORE_FALLBACK_RADIUS_KM - 1) is True
-    assert is_core_area(None, CORE_FALLBACK_RADIUS_KM + 1) is False
-    assert is_core_area("", 50) is False
+    assert zone_of(None, TROISDORF_FALLBACK_RADIUS_KM - 1) == ZONE_TROISDORF
+    assert zone_of(None, KREIS_FALLBACK_RADIUS_KM - 1) == ZONE_RHEIN_SIEG
+    assert zone_of(None, KREIS_FALLBACK_RADIUS_KM + 1) == ZONE_OUTSIDE
+    assert zone_of(None, None) == ZONE_OUTSIDE
 
 
-def _wide(lat, lon, dist, is_user_report=True):
-    row = {"id": 1, "city": "Testort"}
-    if is_user_report:
-        row["sectorType"] = 1  # Kennzeichen einer Buergermeldung
-    return {"row": row, "lat": lat, "lon": lon, "distance_km": dist, "is_core": False}
-
-
-def test_wide_cluster_merges_across_a_city():
-    from app.collectors.power.outage_collector import cluster_wide
-    # Drei Meldungen im Umkreis weniger Kilometer -> ein Ereignis
-    entries = [_wide(50.94, 6.96, 25), _wide(50.95, 6.98, 26), _wide(50.93, 6.94, 24)]
-    assert len(cluster_wide(entries)) == 1
-
-
-def test_wide_cluster_separates_distant_regions():
-    from app.collectors.power.outage_collector import cluster_wide
-    entries = [_wide(50.94, 6.96, 25), _wide(50.11, 8.68, 120)]  # Koeln vs. Frankfurt
-    assert len(cluster_wide(entries)) == 2
-
-
-def test_large_scale_thresholds_match_requirement():
-    """Ausserhalb erst ab 100 Meldungen, deutlich relevant ab 500."""
+def test_thresholds_rise_with_distance():
+    """Je weiter weg, desto groesser muss das Ereignis sein."""
     from app.collectors.power.outage_collector import (
-        LARGE_SCALE_CLEAR_REPORTS, LARGE_SCALE_MIN_REPORTS,
+        EXTREMLAGE_MIN_REPORTS, GROSSLAGE_MIN_REPORTS, MIN_CLUSTER_REPORTS,
     )
-    assert LARGE_SCALE_MIN_REPORTS == 100
-    assert LARGE_SCALE_CLEAR_REPORTS == 500
+    assert MIN_CLUSTER_REPORTS < GROSSLAGE_MIN_REPORTS < EXTREMLAGE_MIN_REPORTS
+    assert GROSSLAGE_MIN_REPORTS == 100
+    assert EXTREMLAGE_MIN_REPORTS == 500
 
 
-def test_small_outside_event_is_below_threshold():
-    """Der reale Fall: 39 Meldungen um Pulheim/Bergheim -> verworfen."""
-    from app.collectors.power.outage_collector import LARGE_SCALE_MIN_REPORTS
-    assert 39 < LARGE_SCALE_MIN_REPORTS
+def _entry(lat, lon, dist, confirmed=False):
+    row = {"id": 1, "city": "Testort"}
+    if not confirmed:
+        row["sectorType"] = 1  # Kennzeichen einer Buergermeldung
+    return {"row": row, "lat": lat, "lon": lon, "distance_km": dist}
+
+
+def test_confirmed_record_weighs_more_than_single_report():
+    """Ein Betreiber-Datensatz steht fuer einen Strassenzug, nicht fuer ein Haus."""
+    from app.collectors.power.outage_collector import (
+        CONFIRMED_RECORD_WEIGHT, report_weight,
+    )
+    assert report_weight([_entry(50.9, 7.0, 10, confirmed=True)]) == CONFIRMED_RECORD_WEIGHT
+    assert report_weight([_entry(50.9, 7.0, 10)]) == 1
+
+
+def test_cluster_radius_grows_with_zone():
+    from app.collectors.power.outage_collector import (
+        CLUSTER_RADIUS_KM, KREIS_CLUSTER_RADIUS_KM, WIDE_CLUSTER_RADIUS_KM,
+    )
+    assert CLUSTER_RADIUS_KM < KREIS_CLUSTER_RADIUS_KM < WIDE_CLUSTER_RADIUS_KM
+
+
+def test_cluster_by_radius_merges_and_separates():
+    from app.collectors.power.outage_collector import cluster_by_radius
+    near = [_entry(50.94, 6.96, 25), _entry(50.95, 6.98, 26), _entry(50.93, 6.94, 24)]
+    assert len(cluster_by_radius(near, 25.0)) == 1
+    far = [_entry(50.94, 6.96, 25), _entry(50.11, 8.68, 120)]  # Koeln vs. Frankfurt
+    assert len(cluster_by_radius(far, 25.0)) == 2
+
+
+def test_real_frankfurt_cluster_is_no_extremlage():
+    """Live gemessen: 173 Meldungen um Frankfurt reichen nicht fuer eine Extremlage."""
+    from app.collectors.power.outage_collector import EXTREMLAGE_MIN_REPORTS
+    assert 173 < EXTREMLAGE_MIN_REPORTS
+
+
+def test_real_pulheim_cluster_is_no_extremlage():
+    """Der urspruengliche Stoerfall: 37 Meldungen um Pulheim -> verworfen."""
+    from app.collectors.power.outage_collector import EXTREMLAGE_MIN_REPORTS
+    assert 37 < EXTREMLAGE_MIN_REPORTS
 
 
 if __name__ == "__main__":

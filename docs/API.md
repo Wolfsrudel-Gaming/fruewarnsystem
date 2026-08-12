@@ -148,29 +148,30 @@ Die **einsatzrelevante** Stromquelle: tatsächliche Ausfälle in der Region,
 aus der Störungsauskunft der Verteilnetzbetreiber. Die Stadtwerke Troisdorf
 verweisen für ihr Netzgebiet selbst auf dieses Portal.
 
-**Zwei Relevanzzonen.** Im **Rhein-Sieg-Kreis** (inkl. Troisdorf) ist jeder
-Ausfall einsatzrelevant. Außerhalb interessiert nur ein Großereignis — ein
-einzelner Trafoschaden zwei Kreise weiter ist Rauschen.
+**Drei Relevanzzonen.** Je weiter weg, desto größer muss ein Ereignis sein,
+um überhaupt einsatzrelevant zu werden:
 
-| Feld | Zone | Bedeutung |
+| Zone | Regel | Feld |
 |---|---|---|
-| `confirmed` | Rhein-Sieg | Vom Netzbetreiber bestätigte Störung — belastbar |
-| `reported` | Rhein-Sieg | Gebündelte Bürgermeldungen, noch unbestätigt |
-| `large_scale` | außerhalb | Großflächiger Ausfall ab 100 Meldungen |
+| **Troisdorf** | jeder Ausfall zählt | `confirmed`, `reported` |
+| **Rhein-Sieg-Kreis** | nur Großlagen ab 100 Meldungen (ab 300 flächig) | `grosslagen` |
+| **außerhalb** | nur Extremlagen ab 500 Meldungen (ab 1500 großräumig) | `extremlagen` |
 
-Die Zonenzuordnung erfolgt über die **Postleitzahl** (die 19 Kommunen des
-Kreises sind im Collector hinterlegt), nicht über einen Radius — der Kreis
-reicht im Osten (Windeck) deutlich weiter als im Westen. Nur wenn eine
-Meldung gar keine PLZ mitbringt, entscheidet die Entfernung (≤ 12 km).
-Nachbarstädte wie Köln-Porz oder Bonn gehören damit **nicht** zum
-Kernbereich und fallen unter die Großereignis-Regel.
+Die Zonenzuordnung erfolgt über die **Postleitzahl** (Troisdorf: 53840/53842/
+53844; die übrigen 18 Kommunen des Kreises sind im Collector hinterlegt),
+nicht über einen Radius — der Kreis reicht im Osten (Windeck) deutlich weiter
+als im Westen, und ein Radius würde Köln-Porz und Bonn hereinziehen. Nur wenn
+eine Meldung gar keine PLZ mitbringt, entscheidet die Entfernung (≤ 7 km
+Troisdorf, ≤ 25 km Kreis).
 
-Bürgermeldungen im Kreis werden räumlich geclustert (3 km) und erst ab 3
-Meldungen berücksichtigt: eine einzelne Meldung kann eine Haussicherung sein.
-Außerhalb wird großflächig gebündelt (25 km), weil sich ein Flächenausfall
-über ganze Städte verteilt; ein bestätigter Betreiber-Datensatz steht für
-einen ganzen Straßenzug und zählt daher fünffach. Erfasst wird ein Umkreis
-von 150 km, Abfrage alle 5 Minuten.
+`confirmed` sind vom Netzbetreiber bestätigte Störungen, `reported` gebündelte
+Bürgermeldungen — früher da, aber unbestätigt. In Troisdorf werden sie eng
+geclustert (3 km) und erst ab 3 Meldungen berücksichtigt: eine einzelne
+Meldung kann eine Haussicherung sein. Im Kreis wird über 10 km gebündelt,
+außerhalb über 25 km, weil sich ein Flächenausfall über ganze Städte verteilt.
+Ein bestätigter Betreiber-Datensatz steht für einen ganzen Straßenzug und
+zählt daher fünffach gegen die Meldungsschwelle. Erfasst wird ein Umkreis von
+150 km, Abfrage alle 5 Minuten.
 
 ```json
 {
@@ -187,17 +188,20 @@ von 150 km, Abfrage alle 5 Minuten.
 }
 ```
 
-**Scoring.** Im Kreis nach Entfernung: bestätigter Ausfall ≤5 km → 95,
-≤15 km → 80, ≤30 km → 55, darüber 40. Bürgermeldungen zählen 70 % davon,
-zusätzlich gedämpft nach Meldungsanzahl. Für Großereignisse außerhalb zählt
-nicht die Entfernung, sondern die Größe: ab 500 Meldungen → 55, darunter 30
-— eingeordnet als mögliche Amtshilfe-Lage, nicht als eigener Einsatzanlass.
-Die bundesweite SMARD-Bilanz geht mit maximal 40 Punkten ein.
+**Scoring.** In Troisdorf nach Entfernung: bestätigter Ausfall ≤5 km → 95,
+darüber 85. Bürgermeldungen zählen 70 % davon, zusätzlich gedämpft nach
+Meldungsanzahl. Außerhalb Troisdorfs zählt nicht die Entfernung, sondern die
+Größe: Großlage im Kreis ab 300 Meldungen → 70, sonst 55; Extremlage außerhalb
+ab 1500 → 60, sonst 45 — eingeordnet als mögliche Amtshilfe-Lage, nicht als
+eigener Einsatzanlass. Die bundesweite SMARD-Bilanz geht mit maximal 40
+Punkten ein.
 
-Alarmschwellen: `Stromausfall in der Region` (≥50, Typ `outage`),
-`Möglicher Stromausfall (unbestätigt)` (≥40, Typ `outage_unconfirmed`),
-`Großflächiger Stromausfall außerhalb` (≥50, Typ `large_scale_outage`),
-`Stromnetz-Belastung (bundesweit)` (≥60, Typ `grid_stress`).
+Alarmschwellen: `Stromausfall in Troisdorf` (≥50, Typ `outage`),
+`Möglicher Stromausfall Troisdorf (unbestätigt)` (≥40, Typ
+`outage_unconfirmed`), `Großlage im Rhein-Sieg-Kreis` (≥50, Typ
+`grosslage_kreis`), `Extremlage außerhalb des Kreises` (≥45, Typ
+`extremlage_ausserhalb`), `Stromnetz-Belastung (bundesweit)` (≥60, Typ
+`grid_stress`).
 
 > Die genutzte Schnittstelle ist die öffentliche API der Website
 > (Basic-Auth `frontend:frontend` ist eine offene Frontend-Kennung), aber

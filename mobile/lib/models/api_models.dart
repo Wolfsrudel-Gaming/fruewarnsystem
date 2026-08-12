@@ -712,30 +712,36 @@ class PowerOutageData {
   }
 }
 
+/// Drei Relevanzzonen: In Troisdorf zählt jeder Ausfall, im Rhein-Sieg-Kreis
+/// nur Großlagen, außerhalb nur Extremlagen.
 class PowerOutageReport {
-  /// Im Rhein-Sieg-Kreis: vom Netzbetreiber bestätigt
+  /// Troisdorf: vom Netzbetreiber bestätigt
   final List<PowerOutageData> confirmed;
 
-  /// Im Rhein-Sieg-Kreis: gebündelte Bürgermeldungen, noch unbestätigt
+  /// Troisdorf: gebündelte Bürgermeldungen, noch unbestätigt
   final List<PowerOutageData> reported;
 
-  /// Außerhalb des Kreises: nur Großereignisse ab 100 Meldungen
-  final List<PowerOutageData> largeScale;
+  /// Rhein-Sieg-Kreis: flächiger Ausfall ab 100 Meldungen
+  final List<PowerOutageData> grosslagen;
+
+  /// Außerhalb des Kreises: Extremlage ab 500 Meldungen
+  final List<PowerOutageData> extremlagen;
 
   final double? nearestKm;
 
   PowerOutageReport({
     required this.confirmed,
     required this.reported,
-    this.largeScale = const [],
+    this.grosslagen = const [],
+    this.extremlagen = const [],
     this.nearestKm,
   });
 
-  /// Ausfälle im eigenen Kreis — die einsatzrelevanten
-  List<PowerOutageData> get core => [...confirmed, ...reported];
-  bool get hasCore => core.isNotEmpty;
-  bool get isEmpty => core.isEmpty && largeScale.isEmpty;
-  List<PowerOutageData> get all => [...core, ...largeScale];
+  /// Ausfälle in Troisdorf selbst — die unmittelbar einsatzrelevanten
+  List<PowerOutageData> get local => [...confirmed, ...reported];
+  bool get hasLocal => local.isNotEmpty;
+  bool get isEmpty => local.isEmpty && grosslagen.isEmpty && extremlagen.isEmpty;
+  List<PowerOutageData> get all => [...local, ...grosslagen, ...extremlagen];
 
   factory PowerOutageReport.fromJson(Map<String, dynamic> json) {
     List<PowerOutageData> parse(String key) => (json[key] as List? ?? [])
@@ -744,7 +750,8 @@ class PowerOutageReport {
     return PowerOutageReport(
       confirmed: parse('confirmed'),
       reported: parse('reported'),
-      largeScale: parse('large_scale'),
+      grosslagen: parse('grosslagen'),
+      extremlagen: parse('extremlagen'),
       nearestKm: (json['nearest_km'] as num?)?.toDouble(),
     );
   }

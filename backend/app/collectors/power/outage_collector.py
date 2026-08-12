@@ -48,15 +48,25 @@ HEADERS = {
 
 REQUEST_TIMEOUT = 30
 
-# --- Zwei Relevanzzonen ------------------------------------------------------
-# Kernbereich ist der Rhein-Sieg-Kreis samt Troisdorf: dort ist jeder Ausfall
-# einsatzrelevant. Ausserhalb interessiert nur noch ein Grossereignis — ein
-# einzelner Trafoschaden zwei Kreise weiter ist reines Rauschen.
+# --- Drei Relevanzzonen ------------------------------------------------------
+# Je weiter weg, desto groesser muss ein Ereignis sein, um ueberhaupt
+# einsatzrelevant zu werden:
+#
+#   Troisdorf        -> jeder Ausfall zaehlt
+#   Rhein-Sieg-Kreis -> nur Grosslagen
+#   ausserhalb       -> nur Extremlagen
+#
+# Ein einzelner Trafoschaden in Siegburg ist fuer Troisdorf kein Anlass; ein
+# flaechiger Ausfall im Kreis dagegen sehr wohl.
+
+ZONE_TROISDORF = "troisdorf"
+ZONE_RHEIN_SIEG = "rhein_sieg"
+ZONE_OUTSIDE = "ausserhalb"
 
 TROISDORF_PLZ = {"53840", "53842", "53844"}
 
-# Die 19 Kommunen des Rhein-Sieg-Kreises. Bewusst als Liste statt als Radius:
-# der Kreis reicht im Osten (Windeck) deutlich weiter als im Westen.
+# Die uebrigen 18 Kommunen des Rhein-Sieg-Kreises. Bewusst als Liste statt als
+# Radius: der Kreis reicht im Osten (Windeck) deutlich weiter als im Westen.
 RHEIN_SIEG_PLZ = {
     "53347",  # Alfter
     "53604",  # Bad Honnef
@@ -76,32 +86,34 @@ RHEIN_SIEG_PLZ = {
     "53913",  # Swisttal
     "53343",  # Wachtberg
     "51570",  # Windeck
-    *TROISDORF_PLZ,
 }
-CORE_PLZ = RHEIN_SIEG_PLZ
 
 # Nur wenn eine Meldung gar keine PLZ mitbringt, entscheidet die Entfernung.
-CORE_FALLBACK_RADIUS_KM = 12.0
+TROISDORF_FALLBACK_RADIUS_KM = 7.0
+KREIS_FALLBACK_RADIUS_KM = 25.0
 
-# Umkreis, in dem ueberhaupt nach Grossereignissen geschaut wird
+# Umkreis, in dem ueberhaupt gesucht wird
 WIDE_RADIUS_KM = 150.0
 
-# Buergermeldungen werden geclustert: mehrere Meldungen innerhalb dieses
-# Radius gelten als ein Ereignis.
+# Buergermeldungen in Troisdorf werden eng gebuendelt; einzelne Meldung kann
+# eine Haussicherung sein, mehrere dicht beieinander sind ein Signal.
 CLUSTER_RADIUS_KM = 3.0
-
-# Im Kernbereich reichen wenige Meldungen fuer einen Hinweis
 MIN_CLUSTER_REPORTS = 3
 
-# Ausserhalb wird grossflaechig gebuendelt — ein Flaechenausfall verteilt sich
-# ueber ganze Staedte.
+# Grosslage im Kreis: mittlere Buendelung, spuerbare Groesse
+KREIS_CLUSTER_RADIUS_KM = 10.0
+GROSSLAGE_MIN_REPORTS = 100
+GROSSLAGE_CLEAR_REPORTS = 300
+
+# Extremlage ausserhalb: grossflaechige Buendelung, deutlich hoehere Huerde —
+# hier interessiert nur noch, was ueberregional Kraefte binden koennte.
 WIDE_CLUSTER_RADIUS_KM = 25.0
+EXTREMLAGE_MIN_REPORTS = 500
+EXTREMLAGE_CLEAR_REPORTS = 1500
 
-# Untergrenze, ab der ein Ereignis ausserhalb ueberhaupt erfasst wird
-LARGE_SCALE_MIN_REPORTS = 100
-
-# Ab hier gilt es als deutliches Grossereignis
-LARGE_SCALE_CLEAR_REPORTS = 500
+# Ein bestaetigter Betreiber-Datensatz steht fuer einen ganzen Strassenzug und
+# wiegt daher schwerer als eine einzelne Buergermeldung.
+CONFIRMED_RECORD_WEIGHT = 5
 
 # Datumsformat der API: MM/DD/YYYY HH:MM:SS
 _DATE_FMT = "%m/%d/%Y %H:%M:%S"
@@ -185,20 +197,32 @@ async def _fetch(client: httpx.AsyncClient, path: str) -> list:
         return []
 
 
-def is_core_area(postal_code, distance_km) -> bool:
-    """Liegt die Meldung im Rhein-Sieg-Kreis (inkl. Troisdorf)?
+def zone_of(postal_code, distance_km) -> str:
+    """Ordnet eine Meldung einer der drei Relevanzzonen zu.
 
     Die Postleitzahl ist massgeblich. Nur wenn sie fehlt, entscheidet die
     Entfernung — sonst wuerden Nachbarstaedte wie Koeln-Porz oder Bonn ueber
-    den Radius hereinrutschen, obwohl sie nicht zum Kreis gehoeren.
+    einen Radius hereinrutschen, obwohl sie nicht zum Kreis gehoeren.
     """
     if postal_code:
-        return str(postal_code).strip() in CORE_PLZ
-    return distance_km is not None and distance_km <= CORE_FALLBACK_RADIUS_KM
+        plz = str(postal_code).strip()
+        if plz in TROISDORF_PLZ:
+            return ZONE_TROISDORF
+        if plz in RHEIN_SIEG_PLZ:
+            return ZONE_RHEIN_SIEG
+        return ZONE_OUTSIDE
+
+    if distance_km is None:
+        return ZONE_OUTSIDE
+    if distance_km <= TROISDORF_FALLBACK_RADIUS_KM:
+        return ZONE_TROISDORF
+    if distance_km <= KREIS_FALLBACK_RADIUS_KM:
+        return ZONE_RHEIN_SIEG
+    return ZONE_OUTSIDE
 
 
 def _locate(rows: list, coord_field: str = "coordinates") -> list:
-    """Reichert Meldungen um Entfernung und Zonenzugehoerigkeit an."""
+    """Reichert Meldungen um Entfernung und Zone an."""
     out = []
     for row in rows:
         lat, lon = parse_coordinates(row.get(coord_field))
@@ -212,23 +236,25 @@ def _locate(rows: list, coord_field: str = "coordinates") -> list:
             "lat": lat,
             "lon": lon,
             "distance_km": round(d, 1),
-            "is_core": is_core_area(row.get("postalCode"), d),
+            "zone": zone_of(row.get("postalCode"), d),
         })
     return out
 
 
-def cluster_wide(entries: list) -> list:
-    """Buendelt Meldungen ausserhalb des Kernbereichs grossflaechig.
+def cluster_by_radius(entries: list, radius_km: float) -> list:
+    """Buendelt Meldungen raeumlich zu Ereignissen.
 
-    Ein Flaechenausfall verteilt sich ueber viele Orte; erst die Summe zeigt,
-    ob es sich um ein Grossereignis handelt.
+    Je groesser das betrachtete Gebiet, desto weiter der Radius: ein
+    Flaechenausfall verteilt sich ueber ganze Staedte.
     """
     clusters = []
     for e in sorted(entries, key=lambda x: x["distance_km"]):
         placed = False
         for cl in clusters:
-            if _haversine_km(cl["lat"], cl["lon"], e["lat"], e["lon"]) <= WIDE_CLUSTER_RADIUS_KM:
+            if _haversine_km(cl["lat"], cl["lon"], e["lat"], e["lon"]) <= radius_km:
                 cl["members"].append(e)
+                # Zentrum bleibt die naechstgelegene Meldung, damit die
+                # Entfernung nicht durch Ausreisser verwaessert wird
                 cl["distance_km"] = min(cl["distance_km"], e["distance_km"])
                 placed = True
                 break
@@ -239,6 +265,27 @@ def cluster_wide(entries: list) -> list:
                 "members": [e],
             })
     return clusters
+
+
+def is_confirmed_record(row: dict) -> bool:
+    """Betreiber-Meldung oder Buergermeldung?
+
+    Buergermeldungen tragen ``sectorType``, bestaetigte Stoerungen ``SectorType``
+    — das unterscheidet die beiden Endpunkte zuverlaessig.
+    """
+    return "sectorType" not in row
+
+
+def report_weight(members: list) -> int:
+    """Gewicht eines Ereignisses in 'Meldungen'.
+
+    Buergermeldungen zaehlen einfach, ein bestaetigter Betreiber-Datensatz
+    steht fuer einen ganzen Strassenzug und zaehlt entsprechend hoeher.
+    """
+    return sum(
+        CONFIRMED_RECORD_WEIGHT if is_confirmed_record(m["row"]) else 1
+        for m in members
+    )
 
 
 async def collect_power_outages():
@@ -255,19 +302,22 @@ async def collect_power_outages():
         return []
 
     entries = []
-    located_confirmed = _locate(confirmed_raw)
-    located_reported = [e for e in _locate(reported_raw) if not e["row"].get("disabled")]
+    located = _locate(confirmed_raw) + _locate(reported_raw)
+    located = [e for e in located
+               if not e["row"].get("isFixed") and not e["row"].get("disabled")]
 
-    # === Kernbereich: Rhein-Sieg-Kreis — jeder Ausfall zaehlt ===============
+    by_zone = {ZONE_TROISDORF: [], ZONE_RHEIN_SIEG: [], ZONE_OUTSIDE: []}
+    for e in located:
+        by_zone[e["zone"]].append(e)
+
+    # === Troisdorf: jeder Ausfall zaehlt ===================================
 
     # Ein Ausfall wird teils als mehrere Datensaetze (Strassenzuege) geliefert.
     # Zusammenfassen ueber Betreiber + PLZ + Startzeit.
     seen = {}
-    for item in located_confirmed:
-        if not item["is_core"]:
-            continue
+    for item in by_zone[ZONE_TROISDORF]:
         row = item["row"]
-        if row.get("isFixed"):
+        if not is_confirmed_record(row):
             continue
         key = (row.get("operatorId"), row.get("postalCode"), row.get("dateStart"))
         if key in seen:
@@ -292,108 +342,58 @@ async def collect_power_outages():
             "started_at": parse_api_date(row.get("dateStart")),
             "expected_end": parse_api_date(row.get("dateEnd")),
             "last_update": parse_api_date(row.get("lastUpdate")),
-            "is_fixed": bool(row.get("isFixed")),
+            "is_fixed": False,
             "is_active": True,
             "info": " | ".join(info_parts) if info_parts else None,
             "source": "stoerungsauskunft",
-            "raw_data": {**row, "_zone": "rhein_sieg"},
+            "raw_data": {**row, "_zone": ZONE_TROISDORF},
         }
     entries.extend(seen.values())
 
-    core_reports = [e for e in located_reported if e["is_core"]]
-    for cl in cluster_reports(core_reports):
+    troisdorf_reports = [e for e in by_zone[ZONE_TROISDORF]
+                         if not is_confirmed_record(e["row"])]
+    for cl in cluster_by_radius(troisdorf_reports, CLUSTER_RADIUS_KM):
         if len(cl["members"]) < MIN_CLUSTER_REPORTS:
             continue
-        members = cl["members"]
-        first = members[0]["row"]
-        starts = [parse_api_date(m["row"].get("dateStart")) for m in members]
-        starts = [s for s in starts if s]
-        cities = {m["row"].get("city") for m in members if m["row"].get("city")}
+        entries.append(_aggregate_entry(
+            cl, kind="reported", zone=ZONE_TROISDORF,
+            weight=len(cl["members"]),
+            info=f"{len(cl['members'])} Bürgermeldungen aus Troisdorf, "
+                 f"vom Netzbetreiber noch nicht bestätigt",
+            source="stoerungsauskunft_buerger",
+        ))
 
-        entries.append({
-            "external_id": "cluster-" + "-".join(
-                sorted(str(m["row"].get("id")) for m in members)[:5]
-            ),
-            "kind": "reported",
-            "operator_name": first.get("operatorName"),
-            "postal_code": first.get("postalCode"),
-            "city": ", ".join(sorted(cities)[:3]) if cities else first.get("city"),
-            "district": None,
-            "street": None,
-            "lat": cl["lat"],
-            "lon": cl["lon"],
-            "distance_km": cl["distance_km"],
-            "radius_m": None,
-            "report_count": len(members),
-            "started_at": min(starts) if starts else None,
-            "expected_end": None,
-            "last_update": max(starts) if starts else None,
-            "is_fixed": False,
-            "is_active": True,
-            "info": f"{len(members)} Bürgermeldungen im Umkreis von {CLUSTER_RADIUS_KM:.0f} km",
-            "source": "stoerungsauskunft_buerger",
-            "raw_data": {"member_ids": [m["row"].get("id") for m in members],
-                         "_zone": "rhein_sieg"},
-        })
-
-    # === Ausserhalb: nur Grossereignisse ===================================
-    # Ein einzelner Ausfall zwei Kreise weiter ist fuer Troisdorf belanglos.
-    # Erfasst wird erst, was flaechig genug ist, um ueberregional zu wirken —
-    # etwa als Amtshilfe-Lage.
-    outside = [e for e in located_confirmed + located_reported if not e["is_core"]]
-    outside = [e for e in outside if not e["row"].get("isFixed")]
-
-    for cl in cluster_wide(outside):
-        members = cl["members"]
-        # Buergermeldungen zaehlen einzeln; ein bestaetigter Betreiber-Datensatz
-        # steht fuer einen ganzen Strassenzug und wiegt daher schwerer.
-        report_weight = sum(
-            1 if m["row"].get("id") and "sectorType" in m["row"] else 5
-            for m in members
-        )
-        if report_weight < LARGE_SCALE_MIN_REPORTS:
+    # === Rhein-Sieg-Kreis: nur Grosslagen ==================================
+    for cl in cluster_by_radius(by_zone[ZONE_RHEIN_SIEG], KREIS_CLUSTER_RADIUS_KM):
+        weight = report_weight(cl["members"])
+        if weight < GROSSLAGE_MIN_REPORTS:
             continue
+        clear = weight >= GROSSLAGE_CLEAR_REPORTS
+        cities = _cities_of(cl)
+        entries.append(_aggregate_entry(
+            cl, kind="grosslage", zone=ZONE_RHEIN_SIEG, weight=weight,
+            info=(f"Großlage im Rhein-Sieg-Kreis: {weight} Meldungen in "
+                  f"{len(cities) or 1} Orten"
+                  + (" — flächiger Ausfall" if clear else " — Schwelle erreicht")),
+            source="stoerungsauskunft_grosslage",
+            extra={"clear": clear},
+        ))
 
-        cities = {m["row"].get("city") for m in members if m["row"].get("city")}
-        operators = {m["row"].get("operatorName") for m in members if m["row"].get("operatorName")}
-        starts = [parse_api_date(m["row"].get("dateStart")) for m in members]
-        starts = [s for s in starts if s]
-        clear = report_weight >= LARGE_SCALE_CLEAR_REPORTS
-
-        entries.append({
-            "external_id": "grossereignis-" + "-".join(
-                sorted(str(m["row"].get("id")) for m in members)[:5]
-            ),
-            "kind": "large_scale",
-            "operator_name": ", ".join(sorted(operators)[:2]) if operators else None,
-            "postal_code": members[0]["row"].get("postalCode"),
-            "city": ", ".join(sorted(cities)[:3]) if cities else None,
-            "district": None,
-            "street": None,
-            "lat": cl["lat"],
-            "lon": cl["lon"],
-            "distance_km": cl["distance_km"],
-            "radius_m": None,
-            "report_count": report_weight,
-            "started_at": min(starts) if starts else None,
-            "expected_end": None,
-            "last_update": max(starts) if starts else None,
-            "is_fixed": False,
-            "is_active": True,
-            "info": (
-                f"Großflächiger Ausfall außerhalb des Kreises: {report_weight} Meldungen "
-                f"in {len(cities) or 1} Orten"
-                + (" — überregionale Lage" if clear else " — Schwelle knapp erreicht")
-            ),
-            "source": "stoerungsauskunft_grossereignis",
-            "raw_data": {
-                "_zone": "ausserhalb",
-                "report_weight": report_weight,
-                "member_count": len(members),
-                "cities": sorted(cities)[:20],
-                "clear_large_scale": clear,
-            },
-        })
+    # === Ausserhalb: nur Extremlagen =======================================
+    for cl in cluster_by_radius(by_zone[ZONE_OUTSIDE], WIDE_CLUSTER_RADIUS_KM):
+        weight = report_weight(cl["members"])
+        if weight < EXTREMLAGE_MIN_REPORTS:
+            continue
+        clear = weight >= EXTREMLAGE_CLEAR_REPORTS
+        cities = _cities_of(cl)
+        entries.append(_aggregate_entry(
+            cl, kind="extremlage", zone=ZONE_OUTSIDE, weight=weight,
+            info=(f"Extremlage außerhalb des Kreises: {weight} Meldungen in "
+                  f"{len(cities) or 1} Orten"
+                  + (" — großräumiger Ausfall" if clear else " — Schwelle erreicht")),
+            source="stoerungsauskunft_extremlage",
+            extra={"clear": clear},
+        ))
 
     async with async_session() as session:
         # Alles, was nicht mehr in der Quelle steht, gilt als behoben.
@@ -420,14 +420,59 @@ async def collect_power_outages():
                 session.add(PowerOutage(**data))
         await session.commit()
 
-    confirmed = sum(1 for e in entries if e["kind"] == "confirmed")
-    clusters = sum(1 for e in entries if e["kind"] == "reported")
-    large = sum(1 for e in entries if e["kind"] == "large_scale")
-    nearest = min((e["distance_km"] for e in entries), default=None)
+    counts = {k: sum(1 for e in entries if e["kind"] == k)
+              for k in ("confirmed", "reported", "grosslage", "extremlage")}
     logger.info(
-        "Stromausfaelle Rhein-Sieg: %s bestaetigt, %s Melde-Cluster; "
-        "ausserhalb: %s Grossereignisse (ab %s Meldungen)%s",
-        confirmed, clusters, large, LARGE_SCALE_MIN_REPORTS,
-        f"; naechster {nearest} km" if nearest is not None else "",
+        "Stromausfaelle — Troisdorf: %s bestaetigt, %s Melde-Cluster | "
+        "Kreis: %s Grosslagen (ab %s) | ausserhalb: %s Extremlagen (ab %s)",
+        counts["confirmed"], counts["reported"],
+        counts["grosslage"], GROSSLAGE_MIN_REPORTS,
+        counts["extremlage"], EXTREMLAGE_MIN_REPORTS,
     )
     return entries
+
+
+def _cities_of(cluster: dict) -> set:
+    return {m["row"].get("city") for m in cluster["members"] if m["row"].get("city")}
+
+
+def _aggregate_entry(cluster: dict, kind: str, zone: str, weight: int,
+                     info: str, source: str, extra: dict = None) -> dict:
+    """Baut aus einem Meldungs-Cluster einen Datensatz."""
+    members = cluster["members"]
+    first = members[0]["row"]
+    cities = _cities_of(cluster)
+    operators = {m["row"].get("operatorName") for m in members if m["row"].get("operatorName")}
+    starts = [parse_api_date(m["row"].get("dateStart")) for m in members]
+    starts = [s for s in starts if s]
+
+    return {
+        "external_id": f"{kind}-" + "-".join(
+            sorted(str(m["row"].get("id")) for m in members)[:5]
+        ),
+        "kind": kind,
+        "operator_name": ", ".join(sorted(operators)[:2]) if operators else None,
+        "postal_code": first.get("postalCode"),
+        "city": ", ".join(sorted(cities)[:3]) if cities else first.get("city"),
+        "district": None,
+        "street": None,
+        "lat": cluster["lat"],
+        "lon": cluster["lon"],
+        "distance_km": cluster["distance_km"],
+        "radius_m": None,
+        "report_count": weight,
+        "started_at": min(starts) if starts else None,
+        "expected_end": None,
+        "last_update": max(starts) if starts else None,
+        "is_fixed": False,
+        "is_active": True,
+        "info": info,
+        "source": source,
+        "raw_data": {
+            "_zone": zone,
+            "report_weight": weight,
+            "member_count": len(members),
+            "cities": sorted(cities)[:20],
+            **(extra or {}),
+        },
+    }

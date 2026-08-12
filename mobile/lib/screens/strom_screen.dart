@@ -178,41 +178,70 @@ class _StromScreenState extends State<StromScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Kernbereich: Rhein-Sieg-Kreis — jeder Ausfall zählt
-        if (!rep.hasCore)
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: AppColors.green.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.green.withValues(alpha: 0.3)),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.check_circle_outline, size: 20, color: AppColors.green),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Keine Stromausfälle im Rhein-Sieg-Kreis',
-                    style: TextStyle(color: AppColors.green, fontSize: 13),
-                  ),
-                ),
-              ],
-            ),
-          )
+        // Zone 1 — Troisdorf: jeder Ausfall zählt
+        if (!rep.hasLocal)
+          _okBanner('Keine Stromausfälle in Troisdorf')
         else
-          _coreOutageCard(rep),
+          _localOutageCard(rep),
 
-        // Außerhalb: nur Großereignisse ab 100 Meldungen
-        if (rep.largeScale.isNotEmpty) ...[
+        // Zone 2 — Rhein-Sieg-Kreis: nur Großlagen
+        if (rep.grosslagen.isNotEmpty) ...[
           const SizedBox(height: 10),
-          _largeScaleCard(rep),
+          _zoneCard(
+            items: rep.grosslagen,
+            icon: Icons.warning_amber,
+            title: '${rep.grosslagen.length} Großlage'
+                '${rep.grosslagen.length == 1 ? "" : "n"} im Rhein-Sieg-Kreis',
+            accent: AppColors.orange,
+            clearAt: 300,
+            clearLabel: 'flächiger Ausfall',
+            footer: 'Im Kreis wird ab 100 Meldungen erfasst, '
+                'ab 300 gilt es als flächiger Ausfall.',
+          ),
+        ],
+
+        // Zone 3 — außerhalb: nur Extremlagen
+        if (rep.extremlagen.isNotEmpty) ...[
+          const SizedBox(height: 10),
+          _zoneCard(
+            items: rep.extremlagen,
+            icon: Icons.public,
+            title: '${rep.extremlagen.length} Extremlage'
+                '${rep.extremlagen.length == 1 ? "" : "n"} außerhalb des Kreises',
+            accent: AppColors.textSecondary,
+            clearAt: 1500,
+            clearLabel: 'großräumiger Ausfall',
+            footer: 'Außerhalb des Kreises erst ab 500 Meldungen, '
+                'ab 1500 großräumig — mögliche Amtshilfe-Lage.',
+          ),
         ],
       ],
     );
   }
 
-  Widget _coreOutageCard(PowerOutageReport rep) {
+  Widget _okBanner(String text) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.green.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.green.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_circle_outline, size: 20, color: AppColors.green),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(color: AppColors.green, fontSize: 13)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Ausfälle in Troisdorf selbst — unmittelbar einsatzrelevant
+  Widget _localOutageCard(PowerOutageReport rep) {
     final hasConfirmed = rep.confirmed.isNotEmpty;
     final color = hasConfirmed ? AppColors.red : AppColors.orange;
 
@@ -243,19 +272,19 @@ class _StromScreenState extends State<StromScreen> {
                 ),
               ),
               if (rep.nearestKm != null)
-                Text('nächster ${rep.nearestKm!.toStringAsFixed(0)} km',
+                Text('${rep.nearestKm!.toStringAsFixed(0)} km',
                     style: TextStyle(color: color, fontSize: 11)),
             ],
           ),
           const SizedBox(height: 4),
-          const Text('Rhein-Sieg-Kreis',
+          const Text('Troisdorf',
               style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
           const SizedBox(height: 10),
-          ...rep.core.take(6).map(_outageRow),
-          if (rep.core.length > 6)
+          ...rep.local.take(6).map(_outageRow),
+          if (rep.local.length > 6)
             Padding(
               padding: const EdgeInsets.only(top: 6),
-              child: Text('… und ${rep.core.length - 6} weitere',
+              child: Text('… und ${rep.local.length - 6} weitere',
                   style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
             ),
         ],
@@ -263,87 +292,7 @@ class _StromScreenState extends State<StromScreen> {
     );
   }
 
-  /// Großereignisse außerhalb des Kreises — mögliche Amtshilfe-Lage,
-  /// bewusst zurückhaltender dargestellt als lokale Ausfälle.
-  Widget _largeScaleCard(PowerOutageReport rep) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.public, size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '${rep.largeScale.length} Großereignis'
-                  '${rep.largeScale.length == 1 ? "" : "se"} außerhalb des Kreises',
-                  style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ...rep.largeScale.map((o) {
-            // Ab 500 Meldungen gilt es als eindeutige überregionale Lage
-            final clear = o.reportCount >= 500;
-            final color = clear ? AppColors.orange : AppColors.textMuted;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: color.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text('${o.reportCount}',
-                        style: TextStyle(
-                            color: color, fontSize: 11, fontWeight: FontWeight.bold)),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(o.city ?? 'Unbekannt',
-                            style: const TextStyle(
-                                color: AppColors.textPrimary, fontSize: 13),
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        Text(
-                          '${o.distanceKm?.toStringAsFixed(0) ?? "?"} km · '
-                          '${clear ? "überregionale Lage" : "Schwelle knapp erreicht"}',
-                          style: TextStyle(color: color, fontSize: 11),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
-          const SizedBox(height: 2),
-          const Text(
-            'Außerhalb des Kreises wird erst ab 100 Meldungen erfasst, '
-            'ab 500 gilt es als klare überregionale Lage.',
-            style: TextStyle(color: AppColors.textDim, fontSize: 10, height: 1.4),
-          ),
-        ],
-      ),
-    );
-  }
-
+  /// Einzelner Ausfall in Troisdorf
   Widget _outageRow(PowerOutageData o) {
     final color = o.isConfirmed ? AppColors.red : AppColors.orange;
     return Padding(
@@ -392,6 +341,89 @@ class _StromScreenState extends State<StromScreen> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Aggregierte Lagen außerhalb Troisdorfs — nach Meldungszahl bewertet,
+  /// nicht nach Entfernung.
+  Widget _zoneCard({
+    required List<PowerOutageData> items,
+    required IconData icon,
+    required String title,
+    required Color accent,
+    required int clearAt,
+    required String clearLabel,
+    required String footer,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(title,
+                    style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...items.map((o) {
+            final clear = o.reportCount >= clearAt;
+            final color = clear ? accent : AppColors.textMuted;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text('${o.reportCount}',
+                        style: TextStyle(
+                            color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(o.city ?? 'Unbekannt',
+                            style: const TextStyle(
+                                color: AppColors.textPrimary, fontSize: 13),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                        Text(
+                          '${o.distanceKm?.toStringAsFixed(0) ?? "?"} km · '
+                          '${clear ? clearLabel : "Schwelle erreicht"}',
+                          style: TextStyle(color: color, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 2),
+          Text(footer,
+              style: const TextStyle(
+                  color: AppColors.textDim, fontSize: 10, height: 1.4)),
         ],
       ),
     );

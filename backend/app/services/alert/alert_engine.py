@@ -1063,44 +1063,39 @@ async def _calc_power_score(session) -> dict:
 
     confirmed = [o for o in outages if o.kind == "confirmed"]
     reported = [o for o in outages if o.kind == "reported"]
-    large_scale = [o for o in outages if o.kind == "large_scale"]
+    grosslagen = [o for o in outages if o.kind == "grosslage"]
+    extremlagen = [o for o in outages if o.kind == "extremlage"]
 
     for o in outages:
         d = o.distance_km if o.distance_km is not None else 999
+        count = o.report_count or 0
 
-        if o.kind == "large_scale":
-            # Ausserhalb des Kreises zaehlt nicht die Entfernung, sondern die
-            # Groesse: relevant wird es als moegliche Amtshilfe-Lage, nicht
-            # als eigener Einsatzanlass.
-            count = o.report_count or 0
-            score = 55 if count >= 500 else 30
-            quelle = "Grossereignis ausserhalb des Kreises"
-            grund = (f"{count} Meldungen um {o.city or 'die Region'} "
-                     f"({d:.0f} km) — moegliche Amtshilfe-Lage")
+        if o.kind == "grosslage":
+            # Im eigenen Kreis: flaechiger Ausfall, kann Kreis-Kraefte binden
+            score = 70 if count >= 300 else 55
+            quelle = "Grosslage im Rhein-Sieg-Kreis"
+            grund = (f"{count} Meldungen um {o.city or 'den Kreis'} ({d:.0f} km) — "
+                     f"flaechiger Ausfall im eigenen Kreisgebiet")
+        elif o.kind == "extremlage":
+            # Ausserhalb: nur noch als moegliche Amtshilfe-Lage relevant
+            score = 60 if count >= 1500 else 45
+            quelle = "Extremlage ausserhalb des Kreises"
+            grund = (f"{count} Meldungen um {o.city or 'die Region'} ({d:.0f} km) — "
+                     f"moegliche Amtshilfe-Lage")
+        elif o.kind == "confirmed":
+            score = 95 if d <= 5 else 85
+            quelle = f"Netzbetreiber {o.operator_name or 'unbekannt'}"
+            grund = f"Bestaetigter Stromausfall in {o.city or o.postal_code or 'Troisdorf'}"
+            if o.expected_end:
+                grund += f", voraussichtlich bis {o.expected_end.strftime('%H:%M')}"
         else:
-            if d <= 5:
-                base = 95
-            elif d <= 15:
-                base = 80
-            elif d <= 30:
-                base = 55
-            else:
-                base = 40  # noch im Rhein-Sieg-Kreis, aber am Rand
-
-            if o.kind == "confirmed":
-                score = base
-                quelle = f"Netzbetreiber {o.operator_name or 'unbekannt'}"
-                grund = f"Bestaetigter Stromausfall in {o.city or o.postal_code or 'der Region'}"
-                if o.expected_end:
-                    grund += f", voraussichtlich bis {o.expected_end.strftime('%H:%M')}"
-            else:
-                # Buergermeldungen sind ein frueher, aber unsicherer Hinweis.
-                # Viele Meldungen erhoehen die Verlaesslichkeit.
-                confidence = min(1.0, 0.4 + 0.1 * (o.report_count or 1))
-                score = base * confidence * 0.7
-                quelle = "Buergermeldungen (unbestaetigt)"
-                grund = (f"{o.report_count} Meldungen aus {o.city or 'der Region'} — "
-                         f"vom Netzbetreiber noch nicht bestaetigt")
+            # Buergermeldungen aus Troisdorf: frueher, aber unsicherer Hinweis.
+            # Viele Meldungen erhoehen die Verlaesslichkeit.
+            confidence = min(1.0, 0.4 + 0.1 * count)
+            score = 85 * confidence * 0.7
+            quelle = "Buergermeldungen Troisdorf (unbestaetigt)"
+            grund = (f"{count} Meldungen aus {o.city or 'Troisdorf'} — "
+                     f"vom Netzbetreiber noch nicht bestaetigt")
 
         contributions.append(_contrib(
             source=quelle,
@@ -1113,16 +1108,16 @@ async def _calc_power_score(session) -> dict:
         outage_score = max(outage_score, score)
 
     if confirmed:
-        nearest = min((o.distance_km or 999) for o in confirmed)
-        outage_detail = (f"{len(confirmed)} bestaetigte Stromausfaelle im Kreis, "
-                         f"naechster {nearest:.0f} km")
+        outage_detail = f"{len(confirmed)} bestaetigte Stromausfaelle in Troisdorf"
     elif reported:
-        nearest = min((o.distance_km or 999) for o in reported)
-        outage_detail = (f"{len(reported)} unbestaetigte Meldungscluster im Kreis, "
-                         f"naechster {nearest:.0f} km")
-    elif large_scale:
-        biggest = max(large_scale, key=lambda o: o.report_count or 0)
-        outage_detail = (f"Grossereignis ausserhalb: {biggest.report_count} Meldungen "
+        outage_detail = f"{len(reported)} unbestaetigte Meldungscluster in Troisdorf"
+    elif grosslagen:
+        biggest = max(grosslagen, key=lambda o: o.report_count or 0)
+        outage_detail = (f"Grosslage im Kreis: {biggest.report_count} Meldungen "
+                         f"um {biggest.city or 'den Kreis'}")
+    elif extremlagen:
+        biggest = max(extremlagen, key=lambda o: o.report_count or 0)
+        outage_detail = (f"Extremlage ausserhalb: {biggest.report_count} Meldungen "
                          f"um {biggest.city or 'die Region'}")
 
     # --- Bundesweite Netzbilanz (Nebenaspekt, gedeckelt) ---
@@ -1170,8 +1165,10 @@ async def _calc_power_score(session) -> dict:
             primary = "outage"
         elif reported:
             primary = "outage_unconfirmed"
+        elif grosslagen:
+            primary = "grosslage_kreis"
         else:
-            primary = "large_scale_outage"
+            primary = "extremlage_ausserhalb"
     elif grid_score:
         detail = "Bundesweit erhoehter Importbedarf"
         primary = "grid_stress"
@@ -1357,7 +1354,7 @@ async def seed_default_thresholds():
             ),
             AlertThreshold(
                 category=AlertCategory.POWER,
-                name="Stromausfall in der Region",
+                name="Stromausfall in Troisdorf",
                 condition={"min_score": 50, "type": "outage"},
                 score_contribution=30,
                 notification_channels=["push", "telegram"],
@@ -1365,7 +1362,7 @@ async def seed_default_thresholds():
             ),
             AlertThreshold(
                 category=AlertCategory.POWER,
-                name="Moeglicher Stromausfall (unbestaetigt)",
+                name="Moeglicher Stromausfall Troisdorf (unbestaetigt)",
                 condition={"min_score": 40, "type": "outage_unconfirmed"},
                 score_contribution=15,
                 notification_channels=["push"],
@@ -1373,9 +1370,17 @@ async def seed_default_thresholds():
             ),
             AlertThreshold(
                 category=AlertCategory.POWER,
-                name="Grossflaechiger Stromausfall ausserhalb",
-                condition={"min_score": 50, "type": "large_scale_outage"},
-                score_contribution=15,
+                name="Grosslage im Rhein-Sieg-Kreis",
+                condition={"min_score": 50, "type": "grosslage_kreis"},
+                score_contribution=20,
+                notification_channels=["push", "telegram"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.POWER,
+                name="Extremlage ausserhalb des Kreises",
+                condition={"min_score": 45, "type": "extremlage_ausserhalb"},
+                score_contribution=10,
                 notification_channels=["push"],
                 is_enabled=True,
             ),
