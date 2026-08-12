@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../services/api_service.dart';
 import '../services/app_state.dart';
+import '../services/background_service.dart';
+import '../services/notification_service.dart';
 
 class EinstellungenScreen extends StatefulWidget {
   final ApiService api;
@@ -14,6 +16,7 @@ class EinstellungenScreen extends StatefulWidget {
 }
 
 class _EinstellungenScreenState extends State<EinstellungenScreen> {
+  bool _bgServiceEnabled = true;
   bool _pushEnabled = true;
   bool _ntfyEnabled = false;
   bool _telegramEnabled = false;
@@ -32,7 +35,10 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
+    final bgEnabled = await BackgroundAlarmService.isEnabled();
+    if (!mounted) return;
     setState(() {
+      _bgServiceEnabled = bgEnabled;
       _pushEnabled = prefs.getBool('push_enabled') ?? true;
       _ntfyEnabled = prefs.getBool('ntfy_enabled') ?? false;
       _telegramEnabled = prefs.getBool('telegram_enabled') ?? false;
@@ -82,7 +88,11 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _sectionTitle('Benachrichtigungskanäle'),
+          _sectionTitle('Alarmierung'),
+          const SizedBox(height: 8),
+          _buildAlarmSection(),
+          const SizedBox(height: 24),
+          _sectionTitle('Server-Benachrichtigungskanäle'),
           const SizedBox(height: 8),
           _buildToggleSection(),
           const SizedBox(height: 24),
@@ -105,6 +115,112 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
     );
   }
 
+  /// Hintergrund-Alarmierung: hält die Verbindung auch bei geschlossener App
+  Widget _buildAlarmSection() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+            child: Row(
+              children: [
+                Icon(
+                  _bgServiceEnabled ? Icons.shield : Icons.shield_outlined,
+                  size: 20,
+                  color: _bgServiceEnabled ? AppColors.green : AppColors.textMuted,
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Hintergrund-Überwachung',
+                          style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+                      Text('Alarm auch bei geschlossener App',
+                          style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: _bgServiceEnabled,
+                  activeColor: AppColors.drkRed,
+                  onChanged: (v) async {
+                    setState(() => _bgServiceEnabled = v);
+                    await BackgroundAlarmService.setEnabled(v);
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(v
+                            ? 'Hintergrund-Überwachung aktiviert'
+                            : 'Hintergrund-Überwachung gestoppt'),
+                        backgroundColor: v ? AppColors.green : AppColors.textMuted,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () async {
+                      await NotificationService.showAlert(
+                        id: 999999,
+                        title: '🔴 TEST-ALARM (Score 92)',
+                        body: 'Dies ist ein Testalarm des DRK Frühwarnsystems.\n'
+                            'So sieht ein kritischer Alarm aus.',
+                        critical: true,
+                      );
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Test-Alarm ausgelöst'),
+                          backgroundColor: AppColors.drkRed,
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.notifications_active, size: 16),
+                    label: const Text('Alarm testen'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.drkRedAccent,
+                      side: const BorderSide(color: AppColors.border),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 13, color: AppColors.textDim),
+                SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Falls keine Alarme ankommen: Akku-Optimierung für diese App '
+                    'in den Android-Einstellungen deaktivieren.',
+                    style: TextStyle(color: AppColors.textDim, fontSize: 11, height: 1.35),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildToggleSection() {
     return Container(
       decoration: BoxDecoration(
@@ -114,7 +230,7 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
       ),
       child: Column(
         children: [
-          _toggle('Push (FCM)', Icons.notifications, _pushEnabled, (v) {
+          _toggle('Push (ntfy)', Icons.notifications, _pushEnabled, (v) {
             setState(() => _pushEnabled = v);
             _saveToggle('push_enabled', v);
           }),
@@ -225,9 +341,11 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
       ),
       child: Column(
         children: [
-          _infoRow('App-Version', '1.0.0'),
+          _infoRow('App-Version', '1.1.0'),
           const SizedBox(height: 8),
           _infoRow('Plattform', 'Android'),
+          const SizedBox(height: 8),
+          _infoRow('Hintergrunddienst', _bgServiceEnabled ? 'Aktiv' : 'Gestoppt'),
           const SizedBox(height: 8),
           _infoRow('Server', _serverUrl),
         ],

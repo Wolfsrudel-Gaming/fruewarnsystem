@@ -5,6 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'services/api_service.dart';
 import 'services/app_state.dart';
+import 'services/background_service.dart';
+import 'services/notification_service.dart';
 import 'screens/lagebild_screen.dart';
 import 'screens/alarme_screen.dart';
 import 'screens/lagekarte_screen.dart';
@@ -22,6 +24,10 @@ void main() async {
 
   final prefs = await SharedPreferences.getInstance();
   final serverUrl = prefs.getString('server_url') ?? 'http://10.0.2.2:8000';
+
+  await NotificationService.initialize();
+  await NotificationService.requestPermissions();
+  await BackgroundAlarmService.initialize();
 
   runApp(FruewarnsystemApp(serverUrl: serverUrl));
 }

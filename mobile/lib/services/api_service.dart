@@ -3,17 +3,14 @@ import 'package:http/http.dart' as http;
 import '../models/api_models.dart';
 
 class ApiService {
-  String _baseUrl;
+  String baseUrl;
 
-  ApiService({String baseUrl = 'http://10.0.2.2:8000'}) : _baseUrl = baseUrl;
-
-  String get baseUrl => _baseUrl;
-  set baseUrl(String url) => _baseUrl = url;
+  ApiService({this.baseUrl = 'http://10.0.2.2:8000'});
 
   Future<Map<String, dynamic>?> _getJson(String path) async {
     try {
       final resp = await http.get(
-        Uri.parse('$_baseUrl$path'),
+        Uri.parse('$baseUrl$path'),
         headers: {'Accept': 'application/json'},
       ).timeout(const Duration(seconds: 15));
       if (resp.statusCode == 200) {
@@ -71,7 +68,7 @@ class ApiService {
   Future<bool> acknowledgeAlert(int alertId) async {
     try {
       final resp = await http.post(
-        Uri.parse('$_baseUrl/api/dashboard/alerts/$alertId/acknowledge'),
+        Uri.parse('$baseUrl/api/dashboard/alerts/$alertId/acknowledge'),
       ).timeout(const Duration(seconds: 10));
       return resp.statusCode == 200;
     } catch (_) {
@@ -134,7 +131,7 @@ class ApiService {
     // Der LLM-Report kann dauern — grosszuegiger Timeout.
     try {
       final resp = await http.get(
-        Uri.parse('$_baseUrl/api/dashboard/report'),
+        Uri.parse('$baseUrl/api/dashboard/report'),
         headers: {'Accept': 'application/json'},
       ).timeout(const Duration(seconds: 90));
       if (resp.statusCode == 200) {
