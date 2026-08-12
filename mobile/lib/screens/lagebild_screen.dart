@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
+import '../models/categories.dart';
 import '../services/app_state.dart';
 import '../widgets/risk_gauge.dart';
 import '../widgets/category_card.dart';
-import '../widgets/alert_card.dart';
 import 'kategorie_detail_screen.dart';
+import 'warnungen_screen.dart';
 
 class LagebildScreen extends StatelessWidget {
   const LagebildScreen({super.key});
@@ -27,6 +28,15 @@ class LagebildScreen extends StatelessWidget {
                 const Icon(Icons.cloud_off, color: AppColors.textMuted, size: 48),
                 const SizedBox(height: 12),
                 Text(state.error!, style: const TextStyle(color: AppColors.textSecondary)),
+                const SizedBox(height: 8),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 40),
+                  child: Text(
+                    'Server-URL unter Mehr → Einstellungen prüfen',
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: state.refreshAll,
@@ -54,7 +64,7 @@ class LagebildScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              Center(
+              const Center(
                 child: Text(
                   'Gesamtrisiko',
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
@@ -63,13 +73,31 @@ class LagebildScreen extends StatelessWidget {
               const SizedBox(height: 16),
 
               if (activeAlerts.isNotEmpty) ...[
-                _buildAlertBanner(activeAlerts),
-                const SizedBox(height: 16),
+                _banner(
+                  icon: Icons.warning_amber_rounded,
+                  text: '${activeAlerts.length} aktive${activeAlerts.length == 1 ? 'r Alarm' : ' Alarme'}',
+                  color: AppColors.drkRedLight,
+                ),
+                const SizedBox(height: 10),
               ],
+              if (state.officialWarnings.isNotEmpty) ...[
+                GestureDetector(
+                  onTap: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => const WarnungenScreen(),
+                  )),
+                  child: _banner(
+                    icon: Icons.campaign,
+                    text: '${state.officialWarnings.length} behördliche Warnung${state.officialWarnings.length == 1 ? '' : 'en'} (NINA)',
+                    color: AppColors.orange,
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 6),
 
               _sectionTitle('Kategorien'),
               const SizedBox(height: 8),
-              _buildCategoryGrid(context, ov),
+              _buildCategoryGrid(context, state),
               const SizedBox(height: 20),
 
               if (state.waterStations.isNotEmpty) ...[
@@ -79,7 +107,7 @@ class LagebildScreen extends StatelessWidget {
                 const SizedBox(height: 20),
               ],
 
-              _buildSystemStatus(ov),
+              _buildSystemStatus(state),
               const SizedBox(height: 24),
             ],
           ),
@@ -99,39 +127,37 @@ class LagebildScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildAlertBanner(List<dynamic> alerts) {
-    final count = alerts.length;
+  Widget _banner({required IconData icon, required String text, required Color color}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.drkRed.withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.drkRed.withValues(alpha: 0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: AppColors.drkRedLight, size: 20),
+          Icon(icon, color: color, size: 20),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '$count aktive${count == 1 ? 'r Alarm' : ' Alarme'}',
-              style: const TextStyle(color: AppColors.drkRedAccent, fontSize: 13, fontWeight: FontWeight.w500),
+              text,
+              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w500),
             ),
           ),
-          const Icon(Icons.chevron_right, color: AppColors.drkRedAccent, size: 18),
+          Icon(Icons.chevron_right, color: color, size: 18),
         ],
       ),
     );
   }
 
-  Widget _buildCategoryGrid(BuildContext context, dynamic ov) {
-    final categories = <_Cat>[
-      _Cat('Hochwasser', 'hochwasser', Icons.water),
-      _Cat('Wetter', 'wetter', Icons.thunderstorm),
-      _Cat('Waldbrand', 'waldbrand', Icons.local_fire_department),
-      _Cat('Luftqualität', 'luftqualitaet', Icons.air),
-      _Cat('Verkehr', 'verkehr', Icons.traffic),
-    ];
+  Widget _buildCategoryGrid(BuildContext context, AppState state) {
+    final ov = state.overview;
+
+    // Nach Score sortieren — die brisantesten Kategorien zuerst
+    final sorted = List<RiskCategory>.from(kRiskCategories);
+    double scoreOf(RiskCategory c) => ov?.riskScores[c.key]?.score ?? 0;
+    sorted.sort((a, b) => scoreOf(b).compareTo(scoreOf(a)));
 
     return GridView.count(
       crossAxisCount: 2,
@@ -140,13 +166,15 @@ class LagebildScreen extends StatelessWidget {
       mainAxisSpacing: 10,
       crossAxisSpacing: 10,
       childAspectRatio: 1.5,
-      children: categories.map((cat) {
+      children: sorted.map((cat) {
         final cs = ov?.riskScores[cat.key];
+        final score = cs?.score ?? 0;
+        final detail = (cs?.components?['detail'] as String?) ?? scoreLabel(score.round());
         return CategoryCard(
           icon: cat.icon,
           label: cat.label,
-          score: cs?.score ?? 0,
-          subtitle: scoreLabel((cs?.score ?? 0).round()),
+          score: score,
+          subtitle: detail,
           onTap: () {
             Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => KategorieDetailScreen(category: cat.key, label: cat.label),
@@ -166,10 +194,10 @@ class LagebildScreen extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Row(
-              children: const [
+              children: [
                 Expanded(flex: 3, child: Text('Station', style: TextStyle(color: AppColors.textMuted, fontSize: 11))),
                 Expanded(flex: 2, child: Text('Pegel', style: TextStyle(color: AppColors.textMuted, fontSize: 11))),
                 Expanded(flex: 2, child: Text('Trend', style: TextStyle(color: AppColors.textMuted, fontSize: 11))),
@@ -177,7 +205,7 @@ class LagebildScreen extends StatelessWidget {
             ),
           ),
           const Divider(color: AppColors.border, height: 1),
-          ...state.waterStations.take(5).map((st) => Padding(
+          ...state.waterStations.take(6).map((st) => Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             child: Row(
               children: [
@@ -186,7 +214,8 @@ class LagebildScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(st.stationName, style: const TextStyle(color: AppColors.textPrimary, fontSize: 13)),
+                      Text(st.stationName, style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
                       Text(st.river, style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
                     ],
                   ),
@@ -196,7 +225,7 @@ class LagebildScreen extends StatelessWidget {
                   child: Text(
                     st.currentLevel != null ? '${st.currentLevel!.toStringAsFixed(0)} cm' : '–',
                     style: TextStyle(
-                      color: _waterColor(st.warningLevel),
+                      color: waterLevelColor(st.warningLevel),
                       fontSize: 13,
                       fontWeight: FontWeight.w500,
                     ),
@@ -233,18 +262,8 @@ class LagebildScreen extends StatelessWidget {
     );
   }
 
-  Color _waterColor(String level) {
-    switch (level) {
-      case 'normal': return AppColors.green;
-      case 'meldepegel': return AppColors.yellow;
-      case 'hochwasser_1': return AppColors.orange;
-      case 'hochwasser_2': return AppColors.red;
-      case 'hochwasser_3': return AppColors.purple;
-      default: return AppColors.textSecondary;
-    }
-  }
-
-  Widget _buildSystemStatus(dynamic ov) {
+  Widget _buildSystemStatus(AppState state) {
+    final ov = state.overview;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -263,7 +282,9 @@ class LagebildScreen extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Text(
-            ov != null ? 'System aktiv' : 'Offline',
+            ov != null
+                ? (state.wsConnected ? 'System aktiv · Live' : 'System aktiv · Polling')
+                : 'Offline',
             style: TextStyle(
               color: ov != null ? AppColors.green : AppColors.red,
               fontSize: 12,
@@ -281,18 +302,23 @@ class LagebildScreen extends StatelessWidget {
   }
 
   String _formatTime(String iso) {
-    try {
-      final dt = DateTime.parse(iso);
-      return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-    } catch (_) {
-      return iso;
-    }
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return iso;
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 }
 
-class _Cat {
-  final String label;
-  final String key;
-  final IconData icon;
-  _Cat(this.label, this.key, this.icon);
+/// Farbzuordnung fuer die Server-Warnstufen der Pegel
+/// (normal/below_normal/low/extreme_low/high/very_high/extreme_high).
+Color waterLevelColor(String level) {
+  switch (level) {
+    case 'normal': return AppColors.green;
+    case 'below_normal': return AppColors.yellowLight;
+    case 'low': return AppColors.yellow;
+    case 'extreme_low': return AppColors.orange;
+    case 'high': return AppColors.orange;
+    case 'very_high': return AppColors.red;
+    case 'extreme_high': return AppColors.purple;
+    default: return AppColors.textSecondary;
+  }
 }

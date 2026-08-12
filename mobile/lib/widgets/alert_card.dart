@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../models/api_models.dart';
+import '../models/categories.dart';
 
 class AlertCard extends StatelessWidget {
   final AlertData alert;
@@ -8,22 +9,7 @@ class AlertCard extends StatelessWidget {
 
   const AlertCard({super.key, required this.alert, this.onAcknowledge});
 
-  IconData get _icon {
-    switch (alert.category) {
-      case 'hochwasser':
-        return Icons.water;
-      case 'wetter':
-        return Icons.thunderstorm;
-      case 'waldbrand':
-        return Icons.local_fire_department;
-      case 'luftqualitaet':
-        return Icons.air;
-      case 'verkehr':
-        return Icons.traffic;
-      default:
-        return Icons.warning_amber;
-    }
-  }
+  IconData get _icon => categoryByKey(alert.category).icon;
 
   String get _timeAgo {
     if (alert.triggeredAt == null) return '';

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../theme/app_theme.dart';
+import '../models/api_models.dart';
+import '../models/categories.dart';
 import '../services/api_service.dart';
 
 class VerlaufScreen extends StatefulWidget {
@@ -12,8 +14,16 @@ class VerlaufScreen extends StatefulWidget {
 }
 
 class _VerlaufScreenState extends State<VerlaufScreen> {
+  static const _seriesColors = [
+    AppColors.drkRedLight,
+    AppColors.orange,
+    AppColors.yellow,
+    AppColors.purpleLight,
+    AppColors.greenLight,
+  ];
+
   int _selectedHours = 24;
-  Map<String, dynamic>? _data;
+  List<ScoreHistoryPoint> _points = [];
   bool _loading = true;
 
   @override
@@ -25,7 +35,7 @@ class _VerlaufScreenState extends State<VerlaufScreen> {
   Future<void> _load() async {
     setState(() => _loading = true);
     final data = await widget.api.fetchScoreHistory(hours: _selectedHours);
-    if (mounted) setState(() { _data = data; _loading = false; });
+    if (mounted) setState(() { _points = data; _loading = false; });
   }
 
   @override
@@ -84,19 +94,49 @@ class _VerlaufScreenState extends State<VerlaufScreen> {
   }
 
   Widget _buildContent() {
-    if (_data == null) {
-      return const Center(child: Text('Keine Daten', style: TextStyle(color: AppColors.textMuted)));
+    if (_points.isEmpty) {
+      return const Center(
+        child: Text('Noch keine Verlaufsdaten', style: TextStyle(color: AppColors.textMuted)),
+      );
     }
 
-    final points = (_data!['data_points'] as List?)
-        ?.map((p) => FlSpot(
-              (p['timestamp_hours'] as num?)?.toDouble() ?? 0,
-              (p['score'] as num?)?.toDouble() ?? 0,
-            ))
-        .toList() ?? [];
+    // Nach Kategorie gruppieren
+    final byCategory = <String, List<ScoreHistoryPoint>>{};
+    for (final p in _points) {
+      if (p.calculatedAt == null) continue;
+      byCategory.putIfAbsent(p.category, () => []).add(p);
+    }
+
+    // Die 5 auffälligsten Kategorien (höchster Maximalwert) anzeigen
+    final ranked = byCategory.entries.toList()
+      ..sort((a, b) {
+        final maxA = a.value.map((p) => p.score).reduce((x, y) => x > y ? x : y);
+        final maxB = b.value.map((p) => p.score).reduce((x, y) => x > y ? x : y);
+        return maxB.compareTo(maxA);
+      });
+    final top = ranked.take(5).toList();
+
+    final now = DateTime.now();
+    final series = <LineChartBarData>[];
+    for (var i = 0; i < top.length; i++) {
+      final spots = top[i].value
+          .map((p) => FlSpot(
+                p.calculatedAt!.difference(now).inMinutes / 60.0,
+                p.score,
+              ))
+          .toList()
+        ..sort((a, b) => a.x.compareTo(b.x));
+      series.add(LineChartBarData(
+        spots: spots,
+        isCurved: false,
+        color: _seriesColors[i % _seriesColors.length],
+        barWidth: 2,
+        dotData: const FlDotData(show: false),
+      ));
+    }
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       child: Column(
         children: [
           Expanded(
@@ -107,45 +147,69 @@ class _VerlaufScreenState extends State<VerlaufScreen> {
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(color: AppColors.border),
               ),
-              child: points.isEmpty
-                  ? const Center(child: Text('Keine Verlaufsdaten', style: TextStyle(color: AppColors.textMuted)))
-                  : LineChart(
-                      LineChartData(
-                        gridData: FlGridData(
-                          show: true,
-                          drawVerticalLine: false,
-                          horizontalInterval: 25,
-                          getDrawingHorizontalLine: (v) => FlLine(color: AppColors.border, strokeWidth: 0.5),
-                        ),
-                        titlesData: FlTitlesData(
-                          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 30,
-                              interval: 25,
-                              getTitlesWidget: (v, _) => Text(v.round().toString(), style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
-                            ),
-                          ),
-                          bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                        ),
-                        borderData: FlBorderData(show: false),
-                        minY: 0,
-                        maxY: 100,
-                        lineBarsData: [
-                          LineChartBarData(
-                            spots: points,
-                            isCurved: true,
-                            color: AppColors.drkRed,
-                            barWidth: 2,
-                            dotData: const FlDotData(show: false),
-                            belowBarData: BarAreaData(show: true, color: AppColors.drkRed.withValues(alpha: 0.1)),
-                          ),
-                        ],
+              child: LineChart(
+                LineChartData(
+                  gridData: FlGridData(
+                    show: true,
+                    drawVerticalLine: false,
+                    horizontalInterval: 25,
+                    getDrawingHorizontalLine: (v) =>
+                        const FlLine(color: AppColors.border, strokeWidth: 0.5),
+                  ),
+                  titlesData: FlTitlesData(
+                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    leftTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 30,
+                        interval: 25,
+                        getTitlesWidget: (v, _) => Text(v.round().toString(),
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 10)),
                       ),
                     ),
+                    bottomTitles: AxisTitles(
+                      sideTitles: SideTitles(
+                        showTitles: true,
+                        reservedSize: 22,
+                        interval: _selectedHours <= 24 ? 6 : (_selectedHours ~/ 4).toDouble(),
+                        getTitlesWidget: (v, _) => Text(
+                          v >= 0 ? 'jetzt' : '${v.round()}h',
+                          style: const TextStyle(color: AppColors.textMuted, fontSize: 10),
+                        ),
+                      ),
+                    ),
+                  ),
+                  borderData: FlBorderData(show: false),
+                  minY: 0,
+                  maxY: 100,
+                  lineBarsData: series,
+                ),
+              ),
             ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: List.generate(top.length, (i) {
+              final cat = categoryByKey(top[i].key);
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10, height: 10,
+                    decoration: BoxDecoration(
+                      color: _seriesColors[i % _seriesColors.length],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(cat.label,
+                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                ],
+              );
+            }),
           ),
         ],
       ),

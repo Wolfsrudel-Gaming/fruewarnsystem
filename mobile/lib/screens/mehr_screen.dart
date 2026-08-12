@@ -6,6 +6,8 @@ import 'verlauf_screen.dart';
 import 'eskalation_screen.dart';
 import 'einstellungen_screen.dart';
 import 'schwellenwerte_screen.dart';
+import 'warnungen_screen.dart';
+import 'news_screen.dart';
 
 class MehrScreen extends StatelessWidget {
   const MehrScreen({super.key});
@@ -18,6 +20,24 @@ class MehrScreen extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       children: [
         const SizedBox(height: 8),
+        _menuItem(
+          context,
+          icon: Icons.campaign,
+          label: 'Behördliche Warnungen',
+          subtitle: 'NINA, Katwarn, MoWaS, GDACS',
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const WarnungenScreen(),
+          )),
+        ),
+        _menuItem(
+          context,
+          icon: Icons.newspaper,
+          label: 'Nachrichten',
+          subtitle: 'Relevante Lokalmeldungen mit KI-Bewertung',
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const NewsScreen(),
+          )),
+        ),
         _menuItem(
           context,
           icon: Icons.timeline,

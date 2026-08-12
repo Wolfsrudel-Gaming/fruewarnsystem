@@ -88,7 +88,10 @@ class WaterStation {
   final String trend;
   final String warningLevel;
   final String condition;
+  final double? lat;
+  final double? lon;
   final String? lastUpdate;
+  final List<WaterHistoryPoint> history;
 
   WaterStation({
     required this.stationId,
@@ -98,7 +101,10 @@ class WaterStation {
     required this.trend,
     required this.warningLevel,
     required this.condition,
+    this.lat,
+    this.lon,
     this.lastUpdate,
+    this.history = const [],
   });
 
   factory WaterStation.fromJson(Map<String, dynamic> json) {
@@ -110,7 +116,173 @@ class WaterStation {
       trend: json['trend'] as String? ?? 'unknown',
       warningLevel: json['warning_level'] as String? ?? 'unknown',
       condition: json['condition'] as String? ?? 'unknown',
+      lat: (json['lat'] as num?)?.toDouble(),
+      lon: (json['lon'] as num?)?.toDouble(),
       lastUpdate: json['last_update'] as String?,
+      history: (json['history'] as List? ?? [])
+          .map((h) => WaterHistoryPoint.fromJson(h as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class WaterHistoryPoint {
+  final double? levelCm;
+  final String? timestamp;
+
+  WaterHistoryPoint({this.levelCm, this.timestamp});
+
+  factory WaterHistoryPoint.fromJson(Map<String, dynamic> json) {
+    return WaterHistoryPoint(
+      levelCm: (json['level_cm'] as num?)?.toDouble(),
+      timestamp: json['timestamp'] as String?,
+    );
+  }
+}
+
+class ScoreHistoryPoint {
+  final String category;
+  final double score;
+  final DateTime? calculatedAt;
+
+  ScoreHistoryPoint({required this.category, required this.score, this.calculatedAt});
+
+  factory ScoreHistoryPoint.fromJson(Map<String, dynamic> json) {
+    DateTime? ts;
+    final raw = json['calculated_at'] as String?;
+    if (raw != null) ts = DateTime.tryParse(raw);
+    return ScoreHistoryPoint(
+      category: json['category'] as String? ?? '',
+      score: (json['score'] as num?)?.toDouble() ?? 0,
+      calculatedAt: ts,
+    );
+  }
+}
+
+class OfficialWarningData {
+  final int id;
+  final String? sourceSystem;
+  final String? severity;
+  final String? category;
+  final String headline;
+  final String? description;
+  final String? instruction;
+  final String? areaDescription;
+  final String? effective;
+  final String? expires;
+
+  OfficialWarningData({
+    required this.id,
+    this.sourceSystem,
+    this.severity,
+    this.category,
+    required this.headline,
+    this.description,
+    this.instruction,
+    this.areaDescription,
+    this.effective,
+    this.expires,
+  });
+
+  factory OfficialWarningData.fromJson(Map<String, dynamic> json) {
+    return OfficialWarningData(
+      id: json['id'] as int? ?? 0,
+      sourceSystem: json['source_system'] as String?,
+      severity: json['severity'] as String?,
+      category: json['category'] as String?,
+      headline: json['headline'] as String? ?? '',
+      description: json['description'] as String?,
+      instruction: json['instruction'] as String?,
+      areaDescription: json['area_description'] as String?,
+      effective: json['effective'] as String?,
+      expires: json['expires'] as String?,
+    );
+  }
+}
+
+class AirQualityReading {
+  final String? stationName;
+  final double? pm25;
+  final double? pm10;
+  final double? ozone;
+  final double? no2;
+  final double? aqi;
+  final String? timestamp;
+
+  AirQualityReading({
+    this.stationName,
+    this.pm25,
+    this.pm10,
+    this.ozone,
+    this.no2,
+    this.aqi,
+    this.timestamp,
+  });
+
+  factory AirQualityReading.fromJson(Map<String, dynamic> json) {
+    return AirQualityReading(
+      stationName: json['station_name'] as String?,
+      pm25: (json['pm25'] as num?)?.toDouble(),
+      pm10: (json['pm10'] as num?)?.toDouble(),
+      ozone: (json['ozone'] as num?)?.toDouble(),
+      no2: (json['no2'] as num?)?.toDouble(),
+      aqi: (json['aqi'] as num?)?.toDouble(),
+      timestamp: json['timestamp'] as String?,
+    );
+  }
+}
+
+class NewsItemData {
+  final int id;
+  final String title;
+  final String? summary;
+  final String? url;
+  final String? source;
+  final String? category;
+  final double? relevanceScore;
+  final String? publishedAt;
+
+  NewsItemData({
+    required this.id,
+    required this.title,
+    this.summary,
+    this.url,
+    this.source,
+    this.category,
+    this.relevanceScore,
+    this.publishedAt,
+  });
+
+  factory NewsItemData.fromJson(Map<String, dynamic> json) {
+    return NewsItemData(
+      id: json['id'] as int? ?? 0,
+      title: json['title'] as String? ?? '',
+      summary: json['summary'] as String?,
+      url: json['url'] as String?,
+      source: json['source'] as String?,
+      category: json['category'] as String?,
+      relevanceScore: (json['relevance_score'] as num?)?.toDouble(),
+      publishedAt: json['published_at'] as String?,
+    );
+  }
+}
+
+class SituationReport {
+  final String report;
+  final String generatedAt;
+  final bool llmGenerated;
+
+  SituationReport({
+    required this.report,
+    required this.generatedAt,
+    required this.llmGenerated,
+  });
+
+  factory SituationReport.fromJson(Map<String, dynamic> json) {
+    return SituationReport(
+      report: json['report'] as String? ?? '',
+      generatedAt: json['generated_at'] as String? ?? '',
+      llmGenerated: json['llm_generated'] as bool? ?? false,
     );
   }
 }
@@ -192,6 +364,8 @@ class TrafficEventData {
   final String description;
   final int severity;
   final String source;
+  final double? lat;
+  final double? lon;
 
   TrafficEventData({
     required this.road,
@@ -200,6 +374,8 @@ class TrafficEventData {
     required this.description,
     required this.severity,
     required this.source,
+    this.lat,
+    this.lon,
   });
 
   factory TrafficEventData.fromJson(Map<String, dynamic> json) {
@@ -208,8 +384,10 @@ class TrafficEventData {
       eventType: json['event_type'] as String? ?? '',
       title: json['title'] as String? ?? '',
       description: json['description'] as String? ?? '',
-      severity: json['severity'] as int? ?? 0,
+      severity: (json['severity'] as num?)?.toInt() ?? 0,
       source: json['source'] as String? ?? '',
+      lat: (json['lat'] as num?)?.toDouble(),
+      lon: (json['lon'] as num?)?.toDouble(),
     );
   }
 }

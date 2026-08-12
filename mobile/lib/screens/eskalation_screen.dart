@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../theme/app_theme.dart';
+import '../models/categories.dart';
 import '../services/app_state.dart';
 
 class EskalationScreen extends StatelessWidget {
@@ -65,7 +66,7 @@ class EskalationScreen extends StatelessWidget {
                           children: [
                             Text(a.title, style: const TextStyle(color: AppColors.textPrimary, fontSize: 13)),
                             Text(
-                              'Stufe ${a.escalationLevel} · ${a.category}',
+                              'Stufe ${a.escalationLevel} · ${categoryByKey(a.category).label}',
                               style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
                             ),
                           ],

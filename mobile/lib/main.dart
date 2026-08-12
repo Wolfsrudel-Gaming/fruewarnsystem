@@ -10,6 +10,7 @@ import 'screens/alarme_screen.dart';
 import 'screens/lagekarte_screen.dart';
 import 'screens/ki_bericht_screen.dart';
 import 'screens/mehr_screen.dart';
+import 'screens/kritischer_alarm_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +53,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
+  AppState? _appState;
 
   static const _screens = <Widget>[
     LagebildScreen(),
@@ -60,6 +62,38 @@ class _MainShellState extends State<MainShell> {
     KiBerichtScreen(),
     MehrScreen(),
   ];
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final state = context.read<AppState>();
+    if (_appState != state) {
+      _appState?.removeListener(_checkCriticalAlert);
+      _appState = state;
+      state.addListener(_checkCriticalAlert);
+    }
+  }
+
+  @override
+  void dispose() {
+    _appState?.removeListener(_checkCriticalAlert);
+    super.dispose();
+  }
+
+  /// Bei kritischem Alarm (Score >= 80) Vollbild-Weckruf anzeigen
+  void _checkCriticalAlert() {
+    final state = _appState;
+    final alert = state?.pendingCriticalAlert;
+    if (state == null || alert == null || !mounted) return;
+    state.clearCriticalAlert();
+    Navigator.of(context).push(MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (_) => KritischerAlarmScreen(
+        alert: alert,
+        onAcknowledge: () => state.acknowledgeAlert(alert.id),
+      ),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {

@@ -83,16 +83,65 @@ class ApiService {
     return _getJson('/api/dashboard/scoring/live');
   }
 
-  Future<Map<String, dynamic>?> fetchScoreHistory({
+  /// Server-Format: {"history": [{"category", "score", "calculated_at"}]}
+  Future<List<ScoreHistoryPoint>> fetchScoreHistory({
     String? category,
     int hours = 24,
   }) async {
     var path = '/api/dashboard/history/risk-scores?hours=$hours';
     if (category != null) path += '&category=$category';
-    return _getJson(path);
+    final data = await _getJson(path);
+    if (data == null) return [];
+    return (data['history'] as List? ?? [])
+        .map((p) => ScoreHistoryPoint.fromJson(p as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<Map<String, dynamic>?> fetchThresholds() async {
-    return _getJson('/api/dashboard/thresholds');
+  /// Server-Format: {"thresholds": [{id, category, name, condition, ...}]}
+  Future<List<Map<String, dynamic>>> fetchThresholds() async {
+    final data = await _getJson('/api/dashboard/thresholds');
+    if (data == null) return [];
+    return (data['thresholds'] as List? ?? [])
+        .map((t) => t as Map<String, dynamic>)
+        .toList();
+  }
+
+  Future<List<OfficialWarningData>> fetchOfficialWarnings() async {
+    final data = await _getJson('/api/dashboard/warnings');
+    if (data == null) return [];
+    return (data['warnings'] as List? ?? [])
+        .map((w) => OfficialWarningData.fromJson(w as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<AirQualityReading>> fetchAirQuality() async {
+    final data = await _getJson('/api/dashboard/air-quality');
+    if (data == null) return [];
+    return (data['readings'] as List? ?? [])
+        .map((r) => AirQualityReading.fromJson(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<NewsItemData>> fetchNews({int limit = 30}) async {
+    final data = await _getJson('/api/dashboard/news?limit=$limit');
+    if (data == null) return [];
+    return (data['items'] as List? ?? [])
+        .map((n) => NewsItemData.fromJson(n as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<SituationReport?> fetchReport() async {
+    // Der LLM-Report kann dauern — grosszuegiger Timeout.
+    try {
+      final resp = await http.get(
+        Uri.parse('$_baseUrl/api/dashboard/report'),
+        headers: {'Accept': 'application/json'},
+      ).timeout(const Duration(seconds: 90));
+      if (resp.statusCode == 200) {
+        return SituationReport.fromJson(
+            jsonDecode(resp.body) as Map<String, dynamic>);
+      }
+    } catch (_) {}
+    return null;
   }
 }

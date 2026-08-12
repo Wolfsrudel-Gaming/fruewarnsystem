@@ -16,6 +16,17 @@ from app.models.schemas import (
 logger = logging.getLogger(__name__)
 
 
+def _escalation_level_for_score(score: float) -> int:
+    """Push >=1, Telegram >=2, SMS >=3, Voice/Email >=4 (siehe notifier)."""
+    if score >= 85:
+        return 4
+    if score >= 75:
+        return 3
+    if score >= 60:
+        return 2
+    return 1
+
+
 def _contrib(source: str, source_type: str, value, points: float, reason: str, ts=None) -> dict:
     entry = {
         "source": source,
@@ -81,6 +92,7 @@ async def calculate_risk_scores() -> dict:
 
 
 async def check_thresholds_and_alert(scores: dict):
+    new_alerts = []
     async with async_session() as session:
         stmt = select(AlertThreshold).where(AlertThreshold.is_enabled == True)
         result = await session.execute(stmt)
@@ -123,12 +135,41 @@ async def check_thresholds_and_alert(scores: dict):
                     source_data=scores[cat],
                     threshold_config=threshold.condition,
                     is_active=True,
-                    escalation_level=1,
+                    escalation_level=_escalation_level_for_score(current_score),
                 )
                 session.add(alert)
+                new_alerts.append(alert)
                 logger.warning(f"ALERT: {threshold.name} - Score {current_score:.0f}")
 
         await session.commit()
+
+    # Nach dem Commit: Kanäle benachrichtigen + WebSocket-Clients (App!) informieren.
+    # Fehler hier dürfen den Collector-Lauf nicht abbrechen.
+    for alert in new_alerts:
+        try:
+            from app.services.notification.notifier import send_alert_notifications
+            sent = await send_alert_notifications(alert)
+            logger.info(f"Alert {alert.id}: Benachrichtigungen gesendet via {sent or 'keine Kanäle'}")
+        except Exception as e:
+            logger.error(f"Alert {alert.id}: Benachrichtigung fehlgeschlagen: {e}")
+
+        try:
+            from app.api.websocket.manager import ws_manager
+            await ws_manager.broadcast({
+                "type": "alert",
+                "alert": {
+                    "id": alert.id,
+                    "category": alert.category.value,
+                    "score": alert.score,
+                    "title": alert.title,
+                    "description": alert.description,
+                    "escalation_level": alert.escalation_level,
+                    "acknowledged": alert.acknowledged or False,
+                    "triggered_at": alert.triggered_at.isoformat() if alert.triggered_at else None,
+                },
+            })
+        except Exception as e:
+            logger.error(f"Alert {alert.id}: WebSocket-Broadcast fehlgeschlagen: {e}")
 
 
 async def _calc_water_score(session) -> dict:

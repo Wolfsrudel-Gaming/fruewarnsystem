@@ -2,7 +2,7 @@ import enum
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,24 @@ from app.models.schemas import (
 )
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+
+# Fallback-Koordinaten fuer Stationen, deren raw_data keine Position enthaelt
+# (currentmeasurement.json der Fix-Stationen liefert keine Koordinaten).
+STATION_COORDS = {
+    "KOELN": (50.9367, 6.9631),
+    "BONN": (50.7220, 7.1128),
+    "SIEGBURG": (50.8009, 7.2071),
+    "TROISDORF": (50.8161, 7.1425),
+}
+
+
+def _station_coords(level: WaterLevel) -> tuple:
+    raw = level.raw_data if isinstance(level.raw_data, dict) else {}
+    lat = raw.get("latitude")
+    lon = raw.get("longitude")
+    if lat is not None and lon is not None:
+        return lat, lon
+    return STATION_COORDS.get((level.station_id or "").upper(), (None, None))
 
 
 # Deutsche Kategorie-Aliasse (von der Mobile App verwendet) -> interne Enum-Werte
@@ -73,10 +91,13 @@ def resolve_category(value: str) -> str:
 async def get_overview(db: AsyncSession = Depends(get_db)):
     cutoff = datetime.utcnow() - timedelta(hours=6)
 
+    # Ein Scoring-Lauf schreibt ~13 Zeilen (eine pro Kategorie) — limit muss
+    # gross genug sein, um fuer jede Kategorie den neuesten Wert zu erfassen.
     risk_stmt = (
         select(RiskScore)
+        .where(RiskScore.calculated_at > cutoff)
         .order_by(desc(RiskScore.calculated_at))
-        .limit(50)
+        .limit(100)
     )
     risk_result = await db.execute(risk_stmt)
     risk_scores = risk_result.scalars().all()
@@ -149,6 +170,7 @@ async def get_water_levels(
     for l in levels:
         if l.station_id not in stations:
             classification = classify_water_level(l.level_cm, l.river or "")
+            lat, lon = _station_coords(l)
             stations[l.station_id] = {
                 "station_id": l.station_id,
                 "station_name": l.station_name,
@@ -157,6 +179,8 @@ async def get_water_levels(
                 "trend": l.trend,
                 "warning_level": classification["warning_level"],
                 "condition": classification["condition"],
+                "lat": lat,
+                "lon": lon,
                 "last_update": l.timestamp.isoformat() if l.timestamp else None,
                 "history": [],
             }
@@ -435,7 +459,7 @@ async def acknowledge_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(stmt)
     alert = result.scalar_one_or_none()
     if not alert:
-        return {"error": "Alert not found"}
+        raise HTTPException(status_code=404, detail="Alert nicht gefunden")
 
     alert.acknowledged = True
     alert.acknowledged_at = datetime.utcnow()
@@ -513,6 +537,83 @@ async def get_risk_score_history(
             }
             for s in scores
         ]
+    }
+
+
+@router.get("/report")
+async def get_situation_report(db: AsyncSession = Depends(get_db)):
+    """Oeffentlicher Lagebericht fuer Dashboard und Mobile-App.
+
+    Nutzt das lokale LLM, faellt bei Nichtverfuegbarkeit auf einen
+    strukturierten Bericht aus den aktuellen Daten zurueck.
+    """
+    from app.services.analysis.llm_analyzer import analyzer
+    from app.api.routes.analysis import _generate_fallback_report
+
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+
+    risk_stmt = (
+        select(RiskScore)
+        .where(RiskScore.calculated_at > cutoff)
+        .order_by(desc(RiskScore.calculated_at))
+        .limit(100)
+    )
+    risk_result = await db.execute(risk_stmt)
+    risk_scores = {}
+    for r in risk_result.scalars().all():
+        cat = r.category.value
+        if cat not in risk_scores:
+            risk_scores[cat] = {
+                "score": r.score,
+                "detail": r.components.get("detail", "") if r.components else "",
+            }
+
+    alert_stmt = select(Alert).where(Alert.is_active == True).order_by(desc(Alert.score))
+    alert_result = await db.execute(alert_stmt)
+    active_alerts = [
+        {"category": a.category.value, "title": a.title, "score": a.score}
+        for a in alert_result.scalars().all()
+    ]
+
+    news_stmt = (
+        select(NewsItem)
+        .where(and_(NewsItem.is_relevant == True, NewsItem.created_at > cutoff))
+        .order_by(desc(NewsItem.relevance_score))
+        .limit(15)
+    )
+    news_result = await db.execute(news_stmt)
+    relevant_news = [
+        {
+            "title": n.title,
+            "source": n.source,
+            "category": n.category,
+            "relevance_score": n.relevance_score,
+            "ai_analysis": n.ai_analysis,
+        }
+        for n in news_result.scalars().all()
+    ]
+
+    context = {
+        "risk_scores": risk_scores,
+        "active_alerts": active_alerts,
+        "relevant_news": relevant_news,
+    }
+
+    llm_available = await analyzer.check_availability()
+    report = await analyzer.generate_situation_report(context) if llm_available else None
+    if report is None:
+        report = _generate_fallback_report(context)
+        llm_available = False
+
+    return {
+        "report": report,
+        "generated_at": datetime.utcnow().isoformat(),
+        "llm_generated": llm_available,
+        "context_summary": {
+            "risk_categories": len(risk_scores),
+            "active_alerts": len(active_alerts),
+            "relevant_news": len(relevant_news),
+        },
     }
 
 

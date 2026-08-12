@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class WebSocketService {
-  final String baseUrl;
+  String baseUrl;
   WebSocketChannel? _channel;
   Timer? _reconnectTimer;
   int _retryCount = 0;
@@ -44,6 +43,16 @@ class WebSocketService {
     _retryCount++;
     _reconnectTimer?.cancel();
     _reconnectTimer = Timer(delay, connect);
+  }
+
+  /// Verbindung mit neuer Basis-URL neu aufbauen (Serverwechsel).
+  void reset(String newBaseUrl) {
+    baseUrl = newBaseUrl;
+    _reconnectTimer?.cancel();
+    _channel?.sink.close();
+    _channel = null;
+    _retryCount = 0;
+    connect();
   }
 
   void dispose() {

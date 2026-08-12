@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../theme/app_theme.dart';
+import '../models/api_models.dart';
 import '../services/app_state.dart';
-import '../services/api_service.dart';
 import '../widgets/score_bar.dart';
+import 'lagebild_screen.dart' show waterLevelColor;
 
 class KategorieDetailScreen extends StatefulWidget {
   final String category;
@@ -17,7 +18,7 @@ class KategorieDetailScreen extends StatefulWidget {
 }
 
 class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
-  Map<String, dynamic>? _history;
+  List<ScoreHistoryPoint>? _history;
 
   @override
   void initState() {
@@ -43,14 +44,23 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
         builder: (context, state, _) {
           final cs = state.overview?.riskScores[widget.category];
           final score = cs?.score ?? 0;
+          final detail = cs?.components?['detail'] as String?;
+          final contributions = (cs?.components?['contributions'] as List?)
+                  ?.map((c) => c as Map<String, dynamic>)
+                  .toList() ??
+              [];
 
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              _buildScoreHeader(score),
+              _buildScoreHeader(score, detail),
               const SizedBox(height: 16),
               _buildChart(),
               const SizedBox(height: 16),
+              if (contributions.isNotEmpty) ...[
+                _buildContributions(contributions),
+                const SizedBox(height: 16),
+              ],
               _buildDetails(state),
             ],
           );
@@ -59,20 +69,29 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     );
   }
 
-  Widget _buildScoreHeader(double score) {
+  Widget _card({required Widget child, EdgeInsets? padding}) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: padding ?? const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: AppColors.border),
       ),
+      child: child,
+    );
+  }
+
+  Widget _buildScoreHeader(double score, String? detail) {
+    return _card(
       child: Column(
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(widget.label, style: const TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w600)),
+              Expanded(
+                child: Text(widget.label,
+                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.w600)),
+              ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(
@@ -88,6 +107,14 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
           ),
           const SizedBox(height: 12),
           ScoreBar(score: score, height: 8),
+          if (detail != null && detail.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(detail,
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+            ),
+          ],
         ],
       ),
     );
@@ -96,104 +123,189 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
   Widget _buildChart() {
     final history = _history;
     if (history == null) {
-      return Container(
-        height: 180,
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
+      return _card(
+        child: const SizedBox(
+          height: 150,
+          child: Center(child: CircularProgressIndicator(color: AppColors.drkRed)),
         ),
-        child: const Center(child: CircularProgressIndicator(color: AppColors.drkRed)),
+      );
+    }
+    if (history.isEmpty) {
+      return _card(
+        child: const SizedBox(
+          height: 100,
+          child: Center(
+            child: Text('Noch keine Verlaufsdaten', style: TextStyle(color: AppColors.textMuted)),
+          ),
+        ),
       );
     }
 
-    final points = (history['data_points'] as List?)
-        ?.map((p) => FlSpot(
-              (p['timestamp_hours'] as num?)?.toDouble() ?? 0,
-              (p['score'] as num?)?.toDouble() ?? 0,
+    final now = DateTime.now();
+    final points = history
+        .where((p) => p.calculatedAt != null)
+        .map((p) => FlSpot(
+              // Stunden relativ zu jetzt (negativ = Vergangenheit)
+              p.calculatedAt!.difference(now).inMinutes / 60.0,
+              p.score,
             ))
-        .toList() ?? [];
+        .toList();
 
-    if (points.isEmpty) {
-      return Container(
+    return _card(
+      child: SizedBox(
         height: 180,
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: const Center(
-          child: Text('Keine Verlaufsdaten', style: TextStyle(color: AppColors.textMuted)),
-        ),
-      );
-    }
-
-    return Container(
-      height: 180,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: LineChart(
-        LineChartData(
-          gridData: FlGridData(
-            show: true,
-            drawVerticalLine: false,
-            horizontalInterval: 25,
-            getDrawingHorizontalLine: (v) => FlLine(color: AppColors.border, strokeWidth: 0.5),
-          ),
-          titlesData: FlTitlesData(
-            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 30,
-                interval: 25,
-                getTitlesWidget: (v, _) => Text(
-                  v.round().toString(),
-                  style: const TextStyle(color: AppColors.textMuted, fontSize: 10),
-                ),
-              ),
-            ),
-            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          ),
-          borderData: FlBorderData(show: false),
-          minY: 0,
-          maxY: 100,
-          lineBarsData: [
-            LineChartBarData(
-              spots: points,
-              isCurved: true,
-              color: AppColors.drkRed,
-              barWidth: 2,
-              dotData: const FlDotData(show: false),
-              belowBarData: BarAreaData(
-                show: true,
-                color: AppColors.drkRed.withValues(alpha: 0.1),
-              ),
-            ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Score-Verlauf (24h)',
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            const SizedBox(height: 12),
+            Expanded(child: _lineChart(points)),
           ],
         ),
       ),
     );
   }
 
+  Widget _lineChart(List<FlSpot> points) {
+    return LineChart(
+      LineChartData(
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: 25,
+          getDrawingHorizontalLine: (v) => const FlLine(color: AppColors.border, strokeWidth: 0.5),
+        ),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 30,
+              interval: 25,
+              getTitlesWidget: (v, _) => Text(
+                v.round().toString(),
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 10),
+              ),
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 22,
+              interval: 6,
+              getTitlesWidget: (v, _) => Text(
+                v >= 0 ? 'jetzt' : '${v.round()}h',
+                style: const TextStyle(color: AppColors.textMuted, fontSize: 10),
+              ),
+            ),
+          ),
+        ),
+        borderData: FlBorderData(show: false),
+        minY: 0,
+        maxY: 100,
+        lineBarsData: [
+          LineChartBarData(
+            spots: points,
+            isCurved: false,
+            color: AppColors.drkRed,
+            barWidth: 2,
+            dotData: const FlDotData(show: false),
+            belowBarData: BarAreaData(
+              show: true,
+              color: AppColors.drkRed.withValues(alpha: 0.1),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Score-Beiträge: welche Datenquelle wie viele Punkte beisteuert
+  Widget _buildContributions(List<Map<String, dynamic>> contributions) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Score-Zusammensetzung',
+            style: TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        _card(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            children: contributions.take(8).map((c) {
+              final points = (c['points'] as num?)?.toDouble() ?? 0;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 44,
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      decoration: BoxDecoration(
+                        color: scoreColor(points.round()).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '+${points.round()}',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: scoreColor(points.round()),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            c['source'] as String? ?? '',
+                            style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, fontWeight: FontWeight.w500),
+                          ),
+                          Text(
+                            c['reason'] as String? ?? '',
+                            style: const TextStyle(color: AppColors.textMuted, fontSize: 11, height: 1.3),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildDetails(AppState state) {
     switch (widget.category) {
-      case 'hochwasser':
+      case 'water':
         return _buildWaterDetails(state);
-      case 'wetter':
+      case 'weather':
+      case 'official_warning':
         return _buildWeatherDetails(state);
-      case 'waldbrand':
+      case 'fire':
         return _buildFireDetails(state);
-      case 'verkehr':
+      case 'traffic':
         return _buildTrafficDetails(state);
+      case 'air_quality':
+        return _buildAirQualityDetails(state);
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _sectionTitle(String text) {
+    return Text(text,
+        style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600));
   }
 
   Widget _buildWaterDetails(AppState state) {
@@ -201,7 +313,7 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Pegelstationen', style: TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+        _sectionTitle('Pegelstationen'),
         const SizedBox(height: 8),
         ...state.waterStations.map((st) => Container(
           margin: const EdgeInsets.only(bottom: 8),
@@ -213,6 +325,14 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
           ),
           child: Row(
             children: [
+              Container(
+                width: 4, height: 36,
+                decoration: BoxDecoration(
+                  color: waterLevelColor(st.warningLevel),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -229,7 +349,8 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
                     st.currentLevel != null ? '${st.currentLevel!.toStringAsFixed(0)} cm' : '–',
                     style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500),
                   ),
-                  Text(st.condition, style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                  Text(_conditionLabel(st.condition),
+                      style: TextStyle(color: waterLevelColor(st.warningLevel), fontSize: 11)),
                 ],
               ),
             ],
@@ -239,15 +360,22 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     );
   }
 
+  String _conditionLabel(String condition) {
+    switch (condition) {
+      case 'normal': return 'Normal';
+      case 'unterdurchschnittlich': return 'Unterdurchschnittlich';
+      case 'niedrigwasser': return 'Niedrigwasser';
+      case 'drought': return 'Dürre';
+      case 'hochwasser': return 'Hochwasser';
+      case 'starkes_hochwasser': return 'Starkes Hochwasser';
+      case 'extremhochwasser': return 'Extremhochwasser';
+      default: return condition;
+    }
+  }
+
   Widget _buildWeatherDetails(AppState state) {
     if (state.weatherWarnings.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
+      return _card(
         child: const Center(
           child: Text('Keine aktiven Wetterwarnungen', style: TextStyle(color: AppColors.textMuted)),
         ),
@@ -256,9 +384,9 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Wetterwarnungen', style: TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+        _sectionTitle('Wetterwarnungen'),
         const SizedBox(height: 8),
-        ...state.weatherWarnings.map((w) => Container(
+        ...state.weatherWarnings.take(10).map((w) => Container(
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -271,15 +399,19 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.warning_amber, size: 16, color: w.severity >= 3 ? AppColors.red : AppColors.yellow),
+                  Icon(Icons.warning_amber, size: 16,
+                      color: w.severity >= 50 ? AppColors.red : AppColors.yellow),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: Text(w.title, style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+                    child: Text(w.title,
+                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
                   ),
                 ],
               ),
               const SizedBox(height: 4),
-              Text(w.description, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis),
+              Text(w.description,
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  maxLines: 3, overflow: TextOverflow.ellipsis),
             ],
           ),
         )),
@@ -292,9 +424,9 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Waldbrandrisiko', style: TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+        _sectionTitle('Waldbrandrisiko'),
         const SizedBox(height: 8),
-        ...state.fireRisks.map((fr) => Container(
+        ...state.fireRisks.take(5).map((fr) => Container(
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -305,14 +437,31 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(fr.region, style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(fr.region,
+                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+                  ),
+                  if ((fr.satelliteHotspots ?? 0) > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.red.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text('${fr.satelliteHotspots} Hotspots',
+                          style: const TextStyle(color: AppColors.redLight, fontSize: 11, fontWeight: FontWeight.w600)),
+                    ),
+                ],
+              ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  _fireMetric('Risiko', fr.riskIndex.toStringAsFixed(1)),
-                  _fireMetric('Temp.', fr.temperature != null ? '${fr.temperature!.round()}°C' : '–'),
-                  _fireMetric('Feuchte', fr.humidity != null ? '${fr.humidity!.round()}%' : '–'),
-                  _fireMetric('Wind', fr.windSpeed != null ? '${fr.windSpeed!.round()} km/h' : '–'),
+                  _metric('Index', '${fr.riskIndex.toStringAsFixed(0)}/5'),
+                  _metric('Temp.', fr.temperature != null ? '${fr.temperature!.round()}°C' : '–'),
+                  _metric('Feuchte', fr.humidity != null ? '${fr.humidity!.round()}%' : '–'),
+                  _metric('Wind', fr.windSpeed != null ? '${fr.windSpeed!.round()} km/h' : '–'),
                 ],
               ),
             ],
@@ -322,7 +471,7 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     );
   }
 
-  Widget _fireMetric(String label, String value) {
+  Widget _metric(String label, String value) {
     return Expanded(
       child: Column(
         children: [
@@ -333,15 +482,52 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     );
   }
 
+  Widget _buildAirQualityDetails(AppState state) {
+    if (state.airQuality.isEmpty) {
+      return _card(
+        child: const Center(
+          child: Text('Keine Messdaten', style: TextStyle(color: AppColors.textMuted)),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('Messstationen'),
+        const SizedBox(height: 8),
+        ...state.airQuality.take(5).map((r) => Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(r.stationName ?? 'Station',
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _metric('PM2.5', r.pm25 != null ? '${r.pm25!.round()}' : '–'),
+                  _metric('PM10', r.pm10 != null ? '${r.pm10!.round()}' : '–'),
+                  _metric('Ozon', r.ozone != null ? '${r.ozone!.round()}' : '–'),
+                  _metric('NO₂', r.no2 != null ? '${r.no2!.round()}' : '–'),
+                  _metric('AQI', r.aqi != null ? '${r.aqi!.round()}' : '–'),
+                ],
+              ),
+            ],
+          ),
+        )),
+      ],
+    );
+  }
+
   Widget _buildTrafficDetails(AppState state) {
     if (state.trafficEvents.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border),
-        ),
+      return _card(
         child: const Center(
           child: Text('Keine Verkehrsmeldungen', style: TextStyle(color: AppColors.textMuted)),
         ),
@@ -350,9 +536,9 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Verkehrsmeldungen', style: TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+        _sectionTitle('Verkehrsmeldungen'),
         const SizedBox(height: 8),
-        ...state.trafficEvents.map((ev) => Container(
+        ...state.trafficEvents.take(15).map((ev) => Container(
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -362,14 +548,21 @@ class _KategorieDetailScreenState extends State<KategorieDetailScreen> {
           ),
           child: Row(
             children: [
-              Icon(Icons.traffic, size: 18, color: ev.severity >= 3 ? AppColors.red : AppColors.yellow),
+              Icon(
+                ev.eventType == 'accident' ? Icons.car_crash : Icons.traffic,
+                size: 18,
+                color: ev.severity >= 50 ? AppColors.red : AppColors.yellow,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(ev.title, style: const TextStyle(color: AppColors.textPrimary, fontSize: 13)),
-                    Text('${ev.road} · ${ev.eventType}', style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                    Text(ev.title,
+                        style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text('${ev.road} · ${ev.eventType}',
+                        style: const TextStyle(color: AppColors.textMuted, fontSize: 11)),
                   ],
                 ),
               ),

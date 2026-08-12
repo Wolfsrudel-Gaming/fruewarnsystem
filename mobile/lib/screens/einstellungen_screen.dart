@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../services/api_service.dart';
+import '../services/app_state.dart';
 
 class EinstellungenScreen extends StatefulWidget {
   final ApiService api;
@@ -58,8 +60,10 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
     widget.api.baseUrl = url;
     setState(() => _serverUrl = url);
     if (mounted) {
+      // Daten und WebSocket sofort mit der neuen URL neu verbinden
+      context.read<AppState>().reconnect();
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Server-URL gespeichert'), backgroundColor: AppColors.green),
+        const SnackBar(content: Text('Server-URL gespeichert, verbinde neu…'), backgroundColor: AppColors.green),
       );
     }
   }
