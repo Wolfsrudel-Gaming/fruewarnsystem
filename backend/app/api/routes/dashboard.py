@@ -1199,12 +1199,25 @@ async def get_power_outages(
 
     confirmed = [o for o in rows if o.kind == "confirmed"]
     reported = [o for o in rows if o.kind == "reported"]
+    large_scale = [o for o in rows if o.kind == "large_scale"]
+
+    # Entfernung nur ueber den Kernbereich — ein Grossereignis 120 km weiter
+    # als "naechster Ausfall" auszuweisen waere irrefuehrend.
+    core = confirmed + reported
 
     return {
         "confirmed": [serialize(o) for o in confirmed],
         "reported": [serialize(o) for o in reported],
+        "large_scale": [serialize(o) for o in large_scale],
         "count_confirmed": len(confirmed),
         "count_reported": len(reported),
-        "nearest_km": min((o.distance_km for o in rows if o.distance_km is not None), default=None),
+        "count_large_scale": len(large_scale),
+        "nearest_km": min((o.distance_km for o in core if o.distance_km is not None),
+                          default=None),
+        "core_area": "Rhein-Sieg-Kreis inkl. Troisdorf",
+        "hinweis": (
+            "Im Rhein-Sieg-Kreis wird jeder Ausfall erfasst. Außerhalb erst ab "
+            "100 Meldungen, als deutliches Großereignis ab 500."
+        ),
         "source": "Störungsauskunft der Verteilnetzbetreiber",
     }

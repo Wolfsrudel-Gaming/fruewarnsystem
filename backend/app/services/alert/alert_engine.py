@@ -1063,34 +1063,44 @@ async def _calc_power_score(session) -> dict:
 
     confirmed = [o for o in outages if o.kind == "confirmed"]
     reported = [o for o in outages if o.kind == "reported"]
+    large_scale = [o for o in outages if o.kind == "large_scale"]
 
     for o in outages:
         d = o.distance_km if o.distance_km is not None else 999
-        if d <= 5:
-            base = 95
-        elif d <= 15:
-            base = 80
-        elif d <= 30:
-            base = 55
-        elif d <= 60:
-            base = 30
-        else:
-            continue
 
-        if o.kind == "confirmed":
-            score = base
-            quelle = f"Netzbetreiber {o.operator_name or 'unbekannt'}"
-            grund = f"Bestaetigter Stromausfall in {o.city or o.postal_code or 'der Region'}"
-            if o.expected_end:
-                grund += f", voraussichtlich bis {o.expected_end.strftime('%H:%M')}"
+        if o.kind == "large_scale":
+            # Ausserhalb des Kreises zaehlt nicht die Entfernung, sondern die
+            # Groesse: relevant wird es als moegliche Amtshilfe-Lage, nicht
+            # als eigener Einsatzanlass.
+            count = o.report_count or 0
+            score = 55 if count >= 500 else 30
+            quelle = "Grossereignis ausserhalb des Kreises"
+            grund = (f"{count} Meldungen um {o.city or 'die Region'} "
+                     f"({d:.0f} km) — moegliche Amtshilfe-Lage")
         else:
-            # Buergermeldungen sind ein frueher, aber unsicherer Hinweis.
-            # Viele Meldungen erhoehen die Verlaesslichkeit.
-            confidence = min(1.0, 0.4 + 0.1 * (o.report_count or 1))
-            score = base * confidence * 0.7
-            quelle = "Buergermeldungen (unbestaetigt)"
-            grund = (f"{o.report_count} Meldungen aus {o.city or 'der Region'} — "
-                     f"vom Netzbetreiber noch nicht bestaetigt")
+            if d <= 5:
+                base = 95
+            elif d <= 15:
+                base = 80
+            elif d <= 30:
+                base = 55
+            else:
+                base = 40  # noch im Rhein-Sieg-Kreis, aber am Rand
+
+            if o.kind == "confirmed":
+                score = base
+                quelle = f"Netzbetreiber {o.operator_name or 'unbekannt'}"
+                grund = f"Bestaetigter Stromausfall in {o.city or o.postal_code or 'der Region'}"
+                if o.expected_end:
+                    grund += f", voraussichtlich bis {o.expected_end.strftime('%H:%M')}"
+            else:
+                # Buergermeldungen sind ein frueher, aber unsicherer Hinweis.
+                # Viele Meldungen erhoehen die Verlaesslichkeit.
+                confidence = min(1.0, 0.4 + 0.1 * (o.report_count or 1))
+                score = base * confidence * 0.7
+                quelle = "Buergermeldungen (unbestaetigt)"
+                grund = (f"{o.report_count} Meldungen aus {o.city or 'der Region'} — "
+                         f"vom Netzbetreiber noch nicht bestaetigt")
 
         contributions.append(_contrib(
             source=quelle,
@@ -1104,10 +1114,16 @@ async def _calc_power_score(session) -> dict:
 
     if confirmed:
         nearest = min((o.distance_km or 999) for o in confirmed)
-        outage_detail = f"{len(confirmed)} bestaetigte Stromausfaelle, naechster {nearest:.0f} km"
+        outage_detail = (f"{len(confirmed)} bestaetigte Stromausfaelle im Kreis, "
+                         f"naechster {nearest:.0f} km")
     elif reported:
         nearest = min((o.distance_km or 999) for o in reported)
-        outage_detail = f"{len(reported)} unbestaetigte Meldungscluster, naechster {nearest:.0f} km"
+        outage_detail = (f"{len(reported)} unbestaetigte Meldungscluster im Kreis, "
+                         f"naechster {nearest:.0f} km")
+    elif large_scale:
+        biggest = max(large_scale, key=lambda o: o.report_count or 0)
+        outage_detail = (f"Grossereignis ausserhalb: {biggest.report_count} Meldungen "
+                         f"um {biggest.city or 'die Region'}")
 
     # --- Bundesweite Netzbilanz (Nebenaspekt, gedeckelt) ---
     cutoff = datetime.utcnow() - timedelta(hours=6)
@@ -1150,7 +1166,12 @@ async def _calc_power_score(session) -> dict:
 
     if outage_detail:
         detail = outage_detail
-        primary = "outage" if confirmed else "outage_unconfirmed"
+        if confirmed:
+            primary = "outage"
+        elif reported:
+            primary = "outage_unconfirmed"
+        else:
+            primary = "large_scale_outage"
     elif grid_score:
         detail = "Bundesweit erhoehter Importbedarf"
         primary = "grid_stress"
@@ -1346,6 +1367,14 @@ async def seed_default_thresholds():
                 category=AlertCategory.POWER,
                 name="Moeglicher Stromausfall (unbestaetigt)",
                 condition={"min_score": 40, "type": "outage_unconfirmed"},
+                score_contribution=15,
+                notification_channels=["push"],
+                is_enabled=True,
+            ),
+            AlertThreshold(
+                category=AlertCategory.POWER,
+                name="Grossflaechiger Stromausfall ausserhalb",
+                condition={"min_score": 50, "type": "large_scale_outage"},
                 score_contribution=15,
                 notification_channels=["push"],
                 is_enabled=True,

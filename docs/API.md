@@ -148,16 +148,29 @@ Die **einsatzrelevante** Stromquelle: tatsächliche Ausfälle in der Region,
 aus der Störungsauskunft der Verteilnetzbetreiber. Die Stadtwerke Troisdorf
 verweisen für ihr Netzgebiet selbst auf dieses Portal.
 
-Zwei Verlässlichkeitsstufen:
+**Zwei Relevanzzonen.** Im **Rhein-Sieg-Kreis** (inkl. Troisdorf) ist jeder
+Ausfall einsatzrelevant. Außerhalb interessiert nur ein Großereignis — ein
+einzelner Trafoschaden zwei Kreise weiter ist Rauschen.
 
-| Feld | Bedeutung |
-|---|---|
-| `confirmed` | Vom Netzbetreiber bestätigte Störung — belastbar |
-| `reported` | Gebündelte Bürgermeldungen — früher da, aber unbestätigt |
+| Feld | Zone | Bedeutung |
+|---|---|---|
+| `confirmed` | Rhein-Sieg | Vom Netzbetreiber bestätigte Störung — belastbar |
+| `reported` | Rhein-Sieg | Gebündelte Bürgermeldungen, noch unbestätigt |
+| `large_scale` | außerhalb | Großflächiger Ausfall ab 100 Meldungen |
 
-Bürgermeldungen werden räumlich geclustert (3 km) und erst ab 3 Meldungen
-berücksichtigt: eine einzelne Meldung kann eine Haussicherung sein. Erfasst
-wird ein Umkreis von 60 km, Abfrage alle 5 Minuten.
+Die Zonenzuordnung erfolgt über die **Postleitzahl** (die 19 Kommunen des
+Kreises sind im Collector hinterlegt), nicht über einen Radius — der Kreis
+reicht im Osten (Windeck) deutlich weiter als im Westen. Nur wenn eine
+Meldung gar keine PLZ mitbringt, entscheidet die Entfernung (≤ 12 km).
+Nachbarstädte wie Köln-Porz oder Bonn gehören damit **nicht** zum
+Kernbereich und fallen unter die Großereignis-Regel.
+
+Bürgermeldungen im Kreis werden räumlich geclustert (3 km) und erst ab 3
+Meldungen berücksichtigt: eine einzelne Meldung kann eine Haussicherung sein.
+Außerhalb wird großflächig gebündelt (25 km), weil sich ein Flächenausfall
+über ganze Städte verteilt; ein bestätigter Betreiber-Datensatz steht für
+einen ganzen Straßenzug und zählt daher fünffach. Erfasst wird ein Umkreis
+von 150 km, Abfrage alle 5 Minuten.
 
 ```json
 {
@@ -174,13 +187,16 @@ wird ein Umkreis von 60 km, Abfrage alle 5 Minuten.
 }
 ```
 
-**Scoring:** Bestätigter Ausfall ≤5 km → 95, ≤15 km → 80, ≤30 km → 55,
-≤60 km → 30. Bürgermeldungen zählen mit 70 % davon, zusätzlich gedämpft nach
-Meldungsanzahl. Die bundesweite SMARD-Bilanz geht nur noch mit maximal 40
-Punkten ein — sie sagt nichts darüber aus, ob lokal der Strom weg ist.
+**Scoring.** Im Kreis nach Entfernung: bestätigter Ausfall ≤5 km → 95,
+≤15 km → 80, ≤30 km → 55, darüber 40. Bürgermeldungen zählen 70 % davon,
+zusätzlich gedämpft nach Meldungsanzahl. Für Großereignisse außerhalb zählt
+nicht die Entfernung, sondern die Größe: ab 500 Meldungen → 55, darunter 30
+— eingeordnet als mögliche Amtshilfe-Lage, nicht als eigener Einsatzanlass.
+Die bundesweite SMARD-Bilanz geht mit maximal 40 Punkten ein.
 
 Alarmschwellen: `Stromausfall in der Region` (≥50, Typ `outage`),
 `Möglicher Stromausfall (unbestätigt)` (≥40, Typ `outage_unconfirmed`),
+`Großflächiger Stromausfall außerhalb` (≥50, Typ `large_scale_outage`),
 `Stromnetz-Belastung (bundesweit)` (≥60, Typ `grid_stress`).
 
 > Die genutzte Schnittstelle ist die öffentliche API der Website

@@ -713,18 +713,29 @@ class PowerOutageData {
 }
 
 class PowerOutageReport {
+  /// Im Rhein-Sieg-Kreis: vom Netzbetreiber bestätigt
   final List<PowerOutageData> confirmed;
+
+  /// Im Rhein-Sieg-Kreis: gebündelte Bürgermeldungen, noch unbestätigt
   final List<PowerOutageData> reported;
+
+  /// Außerhalb des Kreises: nur Großereignisse ab 100 Meldungen
+  final List<PowerOutageData> largeScale;
+
   final double? nearestKm;
 
   PowerOutageReport({
     required this.confirmed,
     required this.reported,
+    this.largeScale = const [],
     this.nearestKm,
   });
 
-  bool get isEmpty => confirmed.isEmpty && reported.isEmpty;
-  List<PowerOutageData> get all => [...confirmed, ...reported];
+  /// Ausfälle im eigenen Kreis — die einsatzrelevanten
+  List<PowerOutageData> get core => [...confirmed, ...reported];
+  bool get hasCore => core.isNotEmpty;
+  bool get isEmpty => core.isEmpty && largeScale.isEmpty;
+  List<PowerOutageData> get all => [...core, ...largeScale];
 
   factory PowerOutageReport.fromJson(Map<String, dynamic> json) {
     List<PowerOutageData> parse(String key) => (json[key] as List? ?? [])
@@ -733,6 +744,7 @@ class PowerOutageReport {
     return PowerOutageReport(
       confirmed: parse('confirmed'),
       reported: parse('reported'),
+      largeScale: parse('large_scale'),
       nearestKm: (json['nearest_km'] as num?)?.toDouble(),
     );
   }

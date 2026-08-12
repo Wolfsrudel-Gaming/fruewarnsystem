@@ -111,6 +111,79 @@ def test_cluster_radius_is_local():
     assert 0 < CLUSTER_RADIUS_KM <= 5, "Cluster duerfen nicht ganze Kreise umfassen"
 
 
+
+
+
+# --- Relevanzzonen: Rhein-Sieg-Kreis vs. Grossereignisse ausserhalb ---------
+
+def test_troisdorf_is_core():
+    from app.collectors.power.outage_collector import is_core_area
+    for plz in ("53840", "53842", "53844"):
+        assert is_core_area(plz, 0.5) is True
+
+
+def test_rhein_sieg_municipalities_are_core():
+    from app.collectors.power.outage_collector import is_core_area
+    # Quer durch den Kreis, auch die weit entfernten Ecken
+    for plz in ("53721", "53757", "53773", "53604", "51570", "53340"):
+        assert is_core_area(plz, 40) is True, f"{plz} gehoert zum Kreis"
+
+
+def test_neighbouring_cities_are_not_core():
+    """Koeln, Bonn und Rhein-Erft liegen nicht im Kreis.
+
+    Sie sind trotz geringer Entfernung nur ueber die Grossereignis-Regel
+    relevant — sonst waere jeder Trafoschaden in Porz ein Alarm.
+    """
+    from app.collectors.power.outage_collector import is_core_area
+    for plz in ("50769", "53111", "50259", "50126"):
+        assert is_core_area(plz, 8) is False
+
+
+def test_missing_postal_code_falls_back_to_distance():
+    from app.collectors.power.outage_collector import (
+        CORE_FALLBACK_RADIUS_KM, is_core_area,
+    )
+    assert is_core_area(None, CORE_FALLBACK_RADIUS_KM - 1) is True
+    assert is_core_area(None, CORE_FALLBACK_RADIUS_KM + 1) is False
+    assert is_core_area("", 50) is False
+
+
+def _wide(lat, lon, dist, is_user_report=True):
+    row = {"id": 1, "city": "Testort"}
+    if is_user_report:
+        row["sectorType"] = 1  # Kennzeichen einer Buergermeldung
+    return {"row": row, "lat": lat, "lon": lon, "distance_km": dist, "is_core": False}
+
+
+def test_wide_cluster_merges_across_a_city():
+    from app.collectors.power.outage_collector import cluster_wide
+    # Drei Meldungen im Umkreis weniger Kilometer -> ein Ereignis
+    entries = [_wide(50.94, 6.96, 25), _wide(50.95, 6.98, 26), _wide(50.93, 6.94, 24)]
+    assert len(cluster_wide(entries)) == 1
+
+
+def test_wide_cluster_separates_distant_regions():
+    from app.collectors.power.outage_collector import cluster_wide
+    entries = [_wide(50.94, 6.96, 25), _wide(50.11, 8.68, 120)]  # Koeln vs. Frankfurt
+    assert len(cluster_wide(entries)) == 2
+
+
+def test_large_scale_thresholds_match_requirement():
+    """Ausserhalb erst ab 100 Meldungen, deutlich relevant ab 500."""
+    from app.collectors.power.outage_collector import (
+        LARGE_SCALE_CLEAR_REPORTS, LARGE_SCALE_MIN_REPORTS,
+    )
+    assert LARGE_SCALE_MIN_REPORTS == 100
+    assert LARGE_SCALE_CLEAR_REPORTS == 500
+
+
+def test_small_outside_event_is_below_threshold():
+    """Der reale Fall: 39 Meldungen um Pulheim/Bergheim -> verworfen."""
+    from app.collectors.power.outage_collector import LARGE_SCALE_MIN_REPORTS
+    assert 39 < LARGE_SCALE_MIN_REPORTS
+
+
 if __name__ == "__main__":
     import traceback
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
