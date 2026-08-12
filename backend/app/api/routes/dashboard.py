@@ -4,7 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, and_, func, desc
+from sqlalchemy import select, and_, or_, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.database import get_db
@@ -903,9 +903,15 @@ async def get_alerts_pending_feedback(
         r[0] for r in (await db.execute(select(AlertFeedback.alert_id))).all()
     }
 
+    # Auch von selbst beendete Alarme abfragen: Seit Alarme aufgeloest werden,
+    # waeren sonst genau die Faelle unbewertbar, die sich ohne Zutun erledigt
+    # haben — und das sind die interessanten Fehlalarm-Kandidaten.
     alerts = (await db.execute(
         select(Alert)
-        .where(and_(Alert.triggered_at > cutoff, Alert.acknowledged == True))
+        .where(and_(
+            Alert.triggered_at > cutoff,
+            or_(Alert.acknowledged == True, Alert.is_active == False),
+        ))
         .order_by(desc(Alert.triggered_at))
     )).scalars().all()
 

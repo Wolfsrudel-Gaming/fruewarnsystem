@@ -32,7 +32,19 @@ class AppState extends ChangeNotifier {
   /// eintrifft. Die UI zeigt dann den Vollbild-Alarm und ruft
   /// [clearCriticalAlert] auf.
   AlertData? pendingCriticalAlert;
-  final Set<int> _seenCriticalIds = {};
+
+  /// Schlüssel ist "id:eskalationsstufe": Ein anhaltender Alarm behält seine
+  /// ID und soll nicht erneut wecken — steigt aber die Eskalationsstufe, ist
+  /// das eine neue Lage und der Vollbild-Alarm erscheint wieder.
+  final Set<String> _seenCriticalKeys = {};
+
+  void _maybeRaiseCritical(AlertData alert) {
+    if (alert.score < 80 || alert.acknowledged) return;
+    final key = '${alert.id}:${alert.escalationLevel}';
+    if (_seenCriticalKeys.contains(key)) return;
+    _seenCriticalKeys.add(key);
+    pendingCriticalAlert = alert;
+  }
 
   AppState({required this.api}) {
     _ws = WebSocketService(baseUrl: api.baseUrl);
@@ -58,10 +70,7 @@ class AppState extends ChangeNotifier {
         final alertJson = msg['alert'] as Map<String, dynamic>?;
         if (alertJson != null) {
           final alert = AlertData.fromJson(alertJson);
-          if (alert.score >= 80 && !_seenCriticalIds.contains(alert.id)) {
-            _seenCriticalIds.add(alert.id);
-            pendingCriticalAlert = alert;
-          }
+          _maybeRaiseCritical(alert);
         }
         refreshAll();
       }
@@ -108,10 +117,7 @@ class AppState extends ChangeNotifier {
       // Fallback: Kritische Alarme auch ohne WS-Event erkennen (z.B. App
       // war im Hintergrund, Poll findet neuen unquittierten Alarm >= 80).
       for (final a in alerts) {
-        if (a.score >= 80 && !a.acknowledged && !_seenCriticalIds.contains(a.id)) {
-          _seenCriticalIds.add(a.id);
-          pendingCriticalAlert = a;
-        }
+        _maybeRaiseCritical(a);
       }
     } catch (e) {
       error = 'Verbindung fehlgeschlagen';

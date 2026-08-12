@@ -241,6 +241,32 @@ Verfügbar sind 6 Auflösungen (`quarterhour`, `hour`, `day`, `week`, `month`,
 `CREOS`). Nicht jede Erzeugungsart existiert in jeder Regelzone — Amprion
 hat z.B. keine Braunkohle.
 
+## Wann erneut alarmiert wird
+
+Ein anhaltender Zustand erzeugt **einen** Alarm, der fortgeschrieben wird —
+nicht bei jedem Collector-Lauf einen neuen. Der Zustand je Schwellenwert:
+
+| Situation | Verhalten |
+|---|---|
+| Schwelle erstmals überschritten | Neuer Alarm + Benachrichtigung |
+| Gleiche oder leicht schwankende Werte | Alarm wird still aktualisiert, **keine** Meldung |
+| Score steigt um ≥ 10 Punkte | Erneute Meldung, frühestens 6 h nach der letzten |
+| Eskalationsstufe steigt | Erneute Meldung **sofort**, Sperrzeit gilt nicht (neue Kanäle) |
+| Score fällt ≥ 5 Punkte unter die Schwelle | Alarm wird beendet (`is_active=false`, `resolved_at`) |
+| Score knapp unter der Schwelle | Alarm bleibt bestehen (Hysterese gegen Flattern) |
+
+Bei einer Verschärfung wird eine frühere Quittierung zurückgenommen — die
+Lage ist eine andere als die, die quittiert wurde. Jede Benachrichtigung wird
+in `notifications_sent` protokolliert (Zeitpunkt, Kanäle, Begründung); daraus
+ergibt sich die Sperrzeit.
+
+Abgleich läuft **pro Schwellenwert**, nicht pro Kategorie — die drei
+Strom-Schwellen können unabhängig voneinander auslösen.
+
+Im WebSocket-Event trägt eine Verschärfung `"escalation": true`. Die App
+nutzt `id:eskalationsstufe` als Schlüssel: Ein fortgeschriebener Alarm weckt
+nicht erneut, eine höhere Stufe schon.
+
 ## Lernschleife: Rückmeldungen und Selbstkalibrierung
 
 Das System lernt aus den Rückmeldungen der Einsatzkräfte, wie zuverlässig

@@ -27,6 +27,99 @@ def _escalation_level_for_score(score: float) -> int:
     return 1
 
 
+# --- Wiederholungssperre -----------------------------------------------------
+# Ohne diese Logik meldet ein unveraendert anhaltender Zustand bei jedem
+# Collector-Lauf erneut. Neu benachrichtigt wird nur, wenn sich die Lage
+# spuerbar verschaerft — sonst wird der bestehende Alarm still fortgeschrieben.
+
+# Score-Anstieg, ab dem eine Lage als deutlich verschaerft gilt
+SIGNIFICANT_RISE = 10.0
+
+# Fruehestens nach dieser Zeit erneut benachrichtigen, selbst bei Anstieg
+RENOTIFY_COOLDOWN = timedelta(hours=6)
+
+# Puffer unterhalb der Schwelle, bevor ein Alarm als beendet gilt. Verhindert
+# Flattern, wenn der Score um die Schwelle herum schwankt.
+RESOLVE_HYSTERESIS = 5.0
+
+
+def _last_notified_at(notifications) -> Optional[datetime]:
+    """Zeitpunkt der letzten Benachrichtigung aus dem Protokoll."""
+    if not isinstance(notifications, list):
+        return None
+    stamps = []
+    for entry in notifications:
+        raw = entry.get("at") if isinstance(entry, dict) else None
+        if not raw:
+            continue
+        try:
+            stamps.append(datetime.fromisoformat(raw))
+        except (TypeError, ValueError):
+            continue
+    return max(stamps) if stamps else None
+
+
+def decide_alert_action(
+    condition_met: bool,
+    current_score: float,
+    min_score: float,
+    existing: Optional[dict],
+    now: Optional[datetime] = None,
+) -> tuple:
+    """Entscheidet, was mit einem Schwellenwert zu tun ist.
+
+    Bewusst frei von Datenbank und Seiteneffekten, damit die Regeln
+    testbar sind. ``existing`` beschreibt den laufenden Alarm derselben
+    Schwelle: ``{"score", "escalation_level", "last_notified"}``.
+
+    Rueckgabe: (aktion, begruendung) mit aktion aus
+    ``create`` | ``notify_update`` | ``silent_update`` | ``resolve`` | ``none``.
+    """
+    now = now or datetime.utcnow()
+
+    if not condition_met:
+        if existing is None:
+            return "none", "Schwelle nicht erreicht"
+        # Erst unterhalb der Hysterese gilt die Lage als entspannt
+        if current_score <= min_score - RESOLVE_HYSTERESIS:
+            return "resolve", (
+                f"Score {current_score:.0f} unter Schwelle {min_score:.0f} "
+                f"(Hysterese {RESOLVE_HYSTERESIS:.0f}) — Alarm beendet"
+            )
+        return "silent_update", "Score knapp unter Schwelle — Alarm bleibt bestehen"
+
+    if existing is None:
+        return "create", f"Neuer Alarm, Score {current_score:.0f}"
+
+    rise = current_score - existing["score"]
+    new_level = _escalation_level_for_score(current_score)
+    level_rise = new_level > existing.get("escalation_level", 0)
+
+    # Eine hoehere Eskalationsstufe bedeutet neue Kanaele — das muss raus,
+    # unabhaengig von der Sperrzeit.
+    if level_rise:
+        return "notify_update", (
+            f"Eskalationsstufe {existing.get('escalation_level', 0)} -> {new_level} "
+            f"(Score {existing['score']:.0f} -> {current_score:.0f})"
+        )
+
+    if rise < SIGNIFICANT_RISE:
+        return "silent_update", (
+            f"Lage unveraendert (Score {existing['score']:.0f} -> {current_score:.0f}) "
+            f"— keine erneute Meldung"
+        )
+
+    last = existing.get("last_notified")
+    if last is not None and (now - last) < RENOTIFY_COOLDOWN:
+        remaining = RENOTIFY_COOLDOWN - (now - last)
+        return "silent_update", (
+            f"Score +{rise:.0f}, aber Sperrzeit laeuft noch "
+            f"({remaining.total_seconds() / 3600:.1f}h)"
+        )
+
+    return "notify_update", f"Deutliche Verschaerfung: Score +{rise:.0f}"
+
+
 def _contrib(source: str, source_type: str, value, points: float, reason: str, ts=None) -> dict:
     entry = {
         "source": source,
@@ -110,14 +203,35 @@ async def calculate_risk_scores() -> dict:
 
 
 async def check_thresholds_and_alert(scores: dict):
-    new_alerts = []
+    """Prueft alle Schwellenwerte und meldet nur echte Aenderungen.
+
+    Ein anhaltender Zustand erzeugt genau einen Alarm, der fortgeschrieben
+    wird. Erneut benachrichtigt wird nur bei deutlicher Verschaerfung oder
+    hoeherer Eskalationsstufe; faellt der Score unter die Schwelle, wird der
+    Alarm beendet statt ewig aktiv zu bleiben.
+    """
+    to_notify = []
+    now = datetime.utcnow()
+
     from app.services.learning.calibration import get_calibration_map
     calibration = await get_calibration_map()
 
     async with async_session() as session:
-        stmt = select(AlertThreshold).where(AlertThreshold.is_enabled == True)
-        result = await session.execute(stmt)
-        thresholds = result.scalars().all()
+        thresholds = (await session.execute(
+            select(AlertThreshold).where(AlertThreshold.is_enabled == True)
+        )).scalars().all()
+
+        # Alle laufenden Alarme einmal laden und der jeweiligen Schwelle
+        # zuordnen. Frueher wurde pro Kategorie geprueft — damit blockierte
+        # ein Alarm alle uebrigen Schwellen derselben Kategorie, und bei zwei
+        # aktiven Alarmen brach scalar_one_or_none() mit einem Fehler ab.
+        active_alerts = (await session.execute(
+            select(Alert).where(Alert.is_active == True)
+        )).scalars().all()
+
+        by_threshold = {}
+        for a in active_alerts:
+            by_threshold.setdefault(_threshold_key_of(a), []).append(a)
 
         for threshold in thresholds:
             cat = threshold.category.value
@@ -134,63 +248,121 @@ async def check_thresholds_and_alert(scores: dict):
             offset = calibration.get(cat, {}).get("offset", 0.0)
             min_score = max(5.0, min(95.0, configured_min + offset))
 
+            type_matches = True
             required_type = condition.get("type")
             if required_type:
-                actual_condition = score_data.get("primary_condition", "")
-                if required_type != actual_condition:
-                    continue
+                type_matches = required_type == score_data.get("primary_condition", "")
 
-            if current_score >= min_score:
-                existing = await session.execute(
-                    select(Alert).where(
-                        and_(
-                            Alert.category == threshold.category,
-                            Alert.is_active == True,
-                            Alert.triggered_at > datetime.utcnow() - timedelta(hours=1),
-                        )
-                    )
+            condition_met = type_matches and current_score >= min_score
+
+            key = (threshold.category, threshold.name)
+            running = by_threshold.get(key, [])
+            # Sollten sich historisch mehrere angesammelt haben: den juengsten
+            # fortfuehren, die uebrigen stillschweigend schliessen.
+            running.sort(key=lambda a: a.triggered_at or datetime.min, reverse=True)
+            current = running[0] if running else None
+            for stale in running[1:]:
+                stale.is_active = False
+                stale.resolved_at = now
+
+            existing_info = None
+            if current is not None:
+                existing_info = {
+                    "score": current.score,
+                    "escalation_level": current.escalation_level or 0,
+                    "last_notified": _last_notified_at(current.notifications_sent)
+                                     or current.triggered_at,
+                }
+
+            action, reason = decide_alert_action(
+                condition_met=condition_met,
+                current_score=current_score,
+                min_score=min_score,
+                existing=existing_info,
+                now=now,
+            )
+
+            if action == "none":
+                continue
+
+            if action == "resolve":
+                current.is_active = False
+                current.resolved_at = now
+                logger.info("Alarm beendet: %s — %s", threshold.name, reason)
+                continue
+
+            if action == "silent_update":
+                # Lage laeuft weiter: Score aktualisieren, aber niemanden wecken
+                current.score = current_score
+                current.source_data = scores[cat]
+                logger.debug("Alarm unveraendert: %s — %s", threshold.name, reason)
+                continue
+
+            threshold_note = (
+                f"Schwellenwert {min_score:.0f} überschritten. "
+                f"Aktueller Score: {current_score:.1f}"
+            )
+            if abs(min_score - configured_min) >= 0.5:
+                direction = "gesenkt" if min_score < configured_min else "angehoben"
+                threshold_note += (
+                    f" (Schwelle aus Einsatz-Rückmeldungen von {configured_min:.0f} "
+                    f"auf {min_score:.0f} {direction})"
                 )
-                if existing.scalar_one_or_none():
-                    continue
 
-                threshold_note = f"Schwellenwert {min_score:.0f} überschritten. Aktueller Score: {current_score:.1f}"
-                if abs(min_score - configured_min) >= 0.5:
-                    direction = "gesenkt" if min_score < configured_min else "angehoben"
-                    threshold_note += (
-                        f" (Schwelle aus Einsatz-Rückmeldungen von {configured_min:.0f} "
-                        f"auf {min_score:.0f} {direction})"
-                    )
-
+            if action == "create":
                 alert = Alert(
                     category=threshold.category,
                     score=current_score,
                     title=f"{threshold.name}: Score {current_score:.0f}/100",
                     description=threshold_note,
                     source_data=scores[cat],
-                    threshold_config=threshold.condition,
+                    # Schwellenname mitschreiben, damit ein laufender Alarm
+                    # spaeter eindeutig seiner Schwelle zugeordnet werden kann
+                    threshold_config={**condition, "_threshold": threshold.name},
                     is_active=True,
                     escalation_level=_escalation_level_for_score(current_score),
+                    notifications_sent=[],
                 )
                 session.add(alert)
-                new_alerts.append(alert)
-                logger.warning(f"ALERT: {threshold.name} - Score {current_score:.0f}")
+                to_notify.append((alert, reason, False))
+                logger.warning("ALERT: %s — Score %.0f (%s)", threshold.name, current_score, reason)
+
+            elif action == "notify_update":
+                current.score = current_score
+                current.title = f"{threshold.name}: Score {current_score:.0f}/100"
+                current.description = threshold_note + f" — {reason}"
+                current.source_data = scores[cat]
+                current.escalation_level = _escalation_level_for_score(current_score)
+                # Verschaerft sich die Lage, ist eine frueher erteilte
+                # Quittierung ueberholt.
+                current.acknowledged = False
+                current.acknowledged_at = None
+                to_notify.append((current, reason, True))
+                logger.warning("ALERT verschaerft: %s — %s", threshold.name, reason)
 
         await session.commit()
 
+        # Benachrichtigungs-Protokoll erst nach dem Versand fortschreiben
+        for alert, reason, _ in to_notify:
+            await session.refresh(alert)
+
     # Nach dem Commit: Kanäle benachrichtigen + WebSocket-Clients (App!) informieren.
     # Fehler hier dürfen den Collector-Lauf nicht abbrechen.
-    for alert in new_alerts:
+    for alert, reason, is_escalation in to_notify:
+        sent = []
         try:
             from app.services.notification.notifier import send_alert_notifications
             sent = await send_alert_notifications(alert)
-            logger.info(f"Alert {alert.id}: Benachrichtigungen gesendet via {sent or 'keine Kanäle'}")
+            logger.info("Alert %s: Benachrichtigungen gesendet via %s",
+                        alert.id, sent or "keine Kanäle")
         except Exception as e:
-            logger.error(f"Alert {alert.id}: Benachrichtigung fehlgeschlagen: {e}")
+            logger.error("Alert %s: Benachrichtigung fehlgeschlagen: %s", alert.id, e)
 
         try:
             from app.api.websocket.manager import ws_manager
             await ws_manager.broadcast({
                 "type": "alert",
+                "escalation": is_escalation,
                 "alert": {
                     "id": alert.id,
                     "category": alert.category.value,
@@ -203,7 +375,39 @@ async def check_thresholds_and_alert(scores: dict):
                 },
             })
         except Exception as e:
-            logger.error(f"Alert {alert.id}: WebSocket-Broadcast fehlgeschlagen: {e}")
+            logger.error("Alert %s: WebSocket-Broadcast fehlgeschlagen: %s", alert.id, e)
+
+        # Zeitpunkt festhalten — Grundlage der Sperrzeit beim naechsten Lauf
+        try:
+            async with async_session() as session:
+                fresh = await session.get(Alert, alert.id)
+                if fresh is not None:
+                    log = list(fresh.notifications_sent or [])
+                    log.append({
+                        "at": datetime.utcnow().isoformat(),
+                        "channels": sent,
+                        "reason": reason,
+                        "escalation": is_escalation,
+                    })
+                    fresh.notifications_sent = log[-20:]
+                    await session.commit()
+        except Exception as e:
+            logger.error("Alert %s: Benachrichtigungsprotokoll nicht gespeichert: %s",
+                         alert.id, e)
+
+
+def _threshold_key_of(alert: Alert) -> tuple:
+    """Ordnet einen bestehenden Alarm seiner Schwelle zu.
+
+    Neuere Alarme tragen den Namen in ``threshold_config``. Aeltere aus der
+    Zeit davor werden ueber den Titel zugeordnet, der mit dem Schwellennamen
+    beginnt.
+    """
+    cfg = alert.threshold_config if isinstance(alert.threshold_config, dict) else {}
+    name = cfg.get("_threshold")
+    if not name and alert.title and ":" in alert.title:
+        name = alert.title.rsplit(":", 1)[0].strip()
+    return (alert.category, name or "")
 
 
 async def _calc_water_score(session) -> dict:

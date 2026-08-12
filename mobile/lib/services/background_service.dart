@@ -72,14 +72,21 @@ void onStart(ServiceInstance service) async {
   Future<void> handleAlert(Map<String, dynamic> alert) async {
     final id = alert['id'] as int? ?? 0;
     final score = (alert['score'] as num?)?.toDouble() ?? 0;
+    final level = alert['escalation_level'] as int? ?? 0;
     final acknowledged = alert['acknowledged'] as bool? ?? false;
     if (acknowledged) return;
+
+    // Der Server schreibt einen anhaltenden Alarm fort, statt ihn zu
+    // wiederholen — die ID bleibt also gleich. Die Eskalationsstufe gehoert
+    // deshalb in den Schluessel: verschaerft sich die Lage, wird erneut
+    // geweckt, unveraenderte Wiederholungen bleiben still.
+    final key = '$id:$level';
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
     final seen = prefs.getStringList(BackgroundAlarmService._prefSeenIds) ?? [];
-    if (seen.contains('$id')) return;
-    seen.add('$id');
+    if (seen.contains(key)) return;
+    seen.add(key);
     // Liste begrenzen, damit die Prefs nicht unbegrenzt wachsen
     while (seen.length > 200) {
       seen.removeAt(0);
@@ -87,11 +94,14 @@ void onStart(ServiceInstance service) async {
     await prefs.setStringList(BackgroundAlarmService._prefSeenIds, seen);
 
     final critical = score >= 80;
+    final escalated = alert['_escalation'] as bool? ?? false;
     await NotificationService.showAlert(
       id: id,
       title: critical
           ? '🔴 KRITISCHER ALARM (Score ${score.round()})'
-          : '⚠️ Alarm: Score ${score.round()}',
+          : escalated
+              ? '⚠️ Lage verschärft: Score ${score.round()}'
+              : '⚠️ Alarm: Score ${score.round()}',
       body: '${alert['title'] ?? ''}\n${alert['description'] ?? ''}',
       critical: critical,
     );
@@ -131,7 +141,11 @@ void onStart(ServiceInstance service) async {
           try {
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
             if (msg['type'] == 'alert' && msg['alert'] is Map<String, dynamic>) {
-              handleAlert(msg['alert'] as Map<String, dynamic>);
+              // Der Eskalations-Marker steht auf Nachrichtenebene
+              handleAlert({
+                ...msg['alert'] as Map<String, dynamic>,
+                '_escalation': msg['escalation'] ?? false,
+              });
             } else if (msg['type'] == 'update' || msg['type'] == 'score_update') {
               // Scores haben sich geaendert — koennte ein neuer Alarm sein,
               // den wir per WS nicht direkt gesehen haben.
