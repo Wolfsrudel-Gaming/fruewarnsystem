@@ -138,14 +138,29 @@ async def get_overview(db: AsyncSession = Depends(get_db)):
         for a in alert_result.scalars().all()
     ]
 
-    overall = 0
-    canonical = {k: v for k, v in scores_by_cat.items() if k not in CATEGORY_ALIASES}
-    if canonical:
-        total = sum(s["score"] for s in canonical.values())
-        overall = min(100, total / len(canonical))
+    # Gesamtrisiko mit derselben Funktion wie die Alert-Engine berechnen.
+    # Frueher rechnete dieser Endpunkt einen eigenen Mittelwert — die App zeigte
+    # dadurch einen anderen Wert als der, auf dem die Alarmierung beruht, und
+    # ein Mittel ueber 13 Kategorien verduennte jede ernste Lage.
+    from app.services.alert.alert_engine import aggregate_overall_score
 
+    canonical = {k: v for k, v in scores_by_cat.items() if k not in CATEGORY_ALIASES}
+    aggregate = aggregate_overall_score({
+        name: {
+            "score": data.get("score", 0),
+            "weight": (data.get("components") or {}).get("weight", 1.0),
+        }
+        for name, data in canonical.items()
+    })
+
+    driver = aggregate.get("driver")
     return {
-        "overall_score": overall,
+        "overall_score": aggregate["score"],
+        "overall_driver": driver,
+        "overall_driver_label": CATEGORY_LABELS.get(driver, driver) if driver else None,
+        "overall_concurrent": [
+            CATEGORY_LABELS.get(c, c) for c in aggregate.get("concurrent", [])
+        ],
         "risk_scores": scores_by_cat,
         "active_alerts": active_alerts,
         "last_updated": datetime.utcnow().isoformat(),
@@ -543,79 +558,27 @@ async def get_risk_score_history(
 
 
 @router.get("/report")
-async def get_situation_report(db: AsyncSession = Depends(get_db)):
-    """Oeffentlicher Lagebericht fuer Dashboard und Mobile-App.
+async def get_situation_report():
+    """KI-Lagebericht — wird im Hintergrund erzeugt und hier ausgeliefert.
 
-    Nutzt das lokale LLM, faellt bei Nichtverfuegbarkeit auf einen
-    strukturierten Bericht aus den aktuellen Daten zurueck.
+    Antwortet immer sofort. Ist der gespeicherte Bericht älter als 30 Minuten,
+    wird im Hintergrund ein neuer angestoßen (`refreshing: true`), der
+    Aufrufer bekommt trotzdem direkt den letzten Stand.
     """
-    from app.services.analysis.llm_analyzer import analyzer
-    from app.api.routes.analysis import _generate_fallback_report
+    from app.services.analysis.report_service import get_latest
+    return await get_latest()
 
-    cutoff = datetime.utcnow() - timedelta(hours=24)
 
-    risk_stmt = (
-        select(RiskScore)
-        .where(RiskScore.calculated_at > cutoff)
-        .order_by(desc(RiskScore.calculated_at))
-        .limit(100)
-    )
-    risk_result = await db.execute(risk_stmt)
-    risk_scores = {}
-    for r in risk_result.scalars().all():
-        cat = r.category.value
-        if cat not in risk_scores:
-            risk_scores[cat] = {
-                "score": r.score,
-                "detail": r.components.get("detail", "") if r.components else "",
-            }
+@router.post("/report/generate")
+async def trigger_report_generation():
+    """Neuberechnung anstoßen, ohne auf das LLM zu warten."""
+    import asyncio
+    from app.services.analysis.report_service import _safe_generate
 
-    alert_stmt = select(Alert).where(Alert.is_active == True).order_by(desc(Alert.score))
-    alert_result = await db.execute(alert_stmt)
-    active_alerts = [
-        {"category": a.category.value, "title": a.title, "score": a.score}
-        for a in alert_result.scalars().all()
-    ]
-
-    news_stmt = (
-        select(NewsItem)
-        .where(and_(NewsItem.is_relevant == True, NewsItem.created_at > cutoff))
-        .order_by(desc(NewsItem.relevance_score))
-        .limit(15)
-    )
-    news_result = await db.execute(news_stmt)
-    relevant_news = [
-        {
-            "title": n.title,
-            "source": n.source,
-            "category": n.category,
-            "relevance_score": n.relevance_score,
-            "ai_analysis": n.ai_analysis,
-        }
-        for n in news_result.scalars().all()
-    ]
-
-    context = {
-        "risk_scores": risk_scores,
-        "active_alerts": active_alerts,
-        "relevant_news": relevant_news,
-    }
-
-    llm_available = await analyzer.check_availability()
-    report = await analyzer.generate_situation_report(context) if llm_available else None
-    if report is None:
-        report = _generate_fallback_report(context)
-        llm_available = False
-
+    asyncio.create_task(_safe_generate())
     return {
-        "report": report,
-        "generated_at": datetime.utcnow().isoformat(),
-        "llm_generated": llm_available,
-        "context_summary": {
-            "risk_categories": len(risk_scores),
-            "active_alerts": len(active_alerts),
-            "relevant_news": len(relevant_news),
-        },
+        "status": "started",
+        "hinweis": "Bericht wird im Hintergrund erstellt, das dauert bis zu drei Minuten.",
     }
 
 

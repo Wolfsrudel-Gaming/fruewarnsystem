@@ -87,6 +87,19 @@ async def send_daily():
         logger.error(f"Daily report failed: {e}")
 
 
+async def refresh_situation_report():
+    """KI-Lagebericht im Hintergrund erzeugen.
+
+    Laeuft bewusst getrennt vom HTTP-Request: Das lokale LLM braucht bis zu
+    drei Minuten, laenger als jeder sinnvolle Client-Timeout.
+    """
+    try:
+        from app.services.analysis.report_service import generate_and_store
+        await generate_and_store()
+    except Exception as e:
+        logger.error(f"Lagebericht fehlgeschlagen: {e}", exc_info=True)
+
+
 async def recompute_learning():
     """Kalibrierung aus den Einsatz-Rueckmeldungen fortschreiben."""
     try:
@@ -178,6 +191,8 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(send_daily, "cron", hour=6, minute=0, id="daily_report", replace_existing=True)
     scheduler.add_job(recompute_learning, "cron", hour=3, minute=30,
                       id="calibration", replace_existing=True)
+    scheduler.add_job(refresh_situation_report, "interval", minutes=20,
+                      id="situation_report", replace_existing=True)
 
     scheduler.start()
     logger.info("Scheduler started with all collectors")

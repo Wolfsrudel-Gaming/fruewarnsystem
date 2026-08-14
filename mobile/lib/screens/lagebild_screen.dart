@@ -71,6 +71,24 @@ class LagebildScreen extends StatelessWidget {
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                 ),
               ),
+              // Woher der Wert kommt — der Gesamtscore folgt dem höchsten
+              // Einzelrisiko, nicht einem Durchschnitt.
+              if (ov?.driverLabel != null) ...[
+                const SizedBox(height: 4),
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      ov!.concurrentLabels.isEmpty
+                          ? 'bestimmt durch ${ov.driverLabel}'
+                          : 'bestimmt durch ${ov.driverLabel}, verschärft durch '
+                              '${ov.concurrentLabels.take(3).join(", ")}',
+                      style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
 
               if (activeAlerts.isNotEmpty) ...[

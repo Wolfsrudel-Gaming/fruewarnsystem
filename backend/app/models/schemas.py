@@ -565,3 +565,22 @@ class PowerOutage(Base):
         Index("ix_outage_active_dist", "is_active", "distance_km"),
         Index("ix_outage_kind", "kind", "is_active"),
     )
+
+
+class SituationReportCache(Base):
+    """Zwischengespeicherter KI-Lagebericht.
+
+    Die Erzeugung ueber das lokale LLM dauert bis zu drei Minuten. Das ist
+    laenger als jeder sinnvolle HTTP-Timeout (App 90s, Nginx meist 60s) —
+    live erzeugt lief der Bericht deshalb regelmaessig ins Leere. Er wird
+    daher im Hintergrund erstellt und hier abgelegt; der Endpunkt liefert
+    sofort aus.
+    """
+    __tablename__ = "situation_reports"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    report = Column(Text, nullable=False)
+    llm_generated = Column(Boolean, default=False)
+    model = Column(String(100), nullable=True)
+    context_summary = Column(JSONB, nullable=True)
+    generation_seconds = Column(Float, nullable=True)
+    generated_at = Column(DateTime, default=func.now(), index=True)

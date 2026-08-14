@@ -4,11 +4,19 @@ class OverviewData {
   final List<AlertData> activeAlerts;
   final String lastUpdated;
 
+  /// Kategorie, die die Gesamtlage bestimmt (höchstes gewichtetes Risiko)
+  final String? driverLabel;
+
+  /// Weitere gleichzeitig erhöhte Kategorien, die die Lage verschärfen
+  final List<String> concurrentLabels;
+
   OverviewData({
     required this.overallScore,
     required this.riskScores,
     required this.activeAlerts,
     required this.lastUpdated,
+    this.driverLabel,
+    this.concurrentLabels = const [],
   });
 
   factory OverviewData.fromJson(Map<String, dynamic> json) {
@@ -25,6 +33,10 @@ class OverviewData {
       riskScores: scores,
       activeAlerts: alerts,
       lastUpdated: json['last_updated'] as String? ?? '',
+      driverLabel: json['overall_driver_label'] as String?,
+      concurrentLabels: (json['overall_concurrent'] as List? ?? [])
+          .map((c) => c.toString())
+          .toList(),
     );
   }
 }
@@ -272,10 +284,22 @@ class SituationReport {
   final String generatedAt;
   final bool llmGenerated;
 
+  /// Alter des Berichts in Minuten — er wird im Hintergrund erzeugt,
+  /// nicht bei jedem Abruf neu.
+  final double ageMinutes;
+
+  /// Im Hintergrund läuft gerade eine Neuberechnung
+  final bool refreshing;
+
+  final String? model;
+
   SituationReport({
     required this.report,
     required this.generatedAt,
     required this.llmGenerated,
+    this.ageMinutes = 0,
+    this.refreshing = false,
+    this.model,
   });
 
   factory SituationReport.fromJson(Map<String, dynamic> json) {
@@ -283,6 +307,9 @@ class SituationReport {
       report: json['report'] as String? ?? '',
       generatedAt: json['generated_at'] as String? ?? '',
       llmGenerated: json['llm_generated'] as bool? ?? false,
+      ageMinutes: (json['age_minutes'] as num?)?.toDouble() ?? 0,
+      refreshing: json['refreshing'] as bool? ?? false,
+      model: json['model'] as String?,
     );
   }
 }

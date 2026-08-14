@@ -120,6 +120,73 @@ def decide_alert_action(
     return "notify_update", f"Deutliche Verschaerfung: Score +{rise:.0f}"
 
 
+# --- Gesamtrisiko ------------------------------------------------------------
+# Der Gesamtscore darf kein Mittelwert sein. Ein Mittel ueber 13 Kategorien
+# verduennt jede ernste Lage: zwei Kategorien auf 100 und elf ruhige ergaben
+# fruehers einen Gesamtwert von 38 ("Erhoeht") — obwohl zwei Risiken am
+# Anschlag standen. Massgeblich ist das hoechste Einzelrisiko; mehrere
+# gleichzeitig erhoehte Lagen verschaerfen es zusaetzlich.
+
+# Bezugsgewicht fuer die Relevanz-Normierung (hoechstes vergebenes Gewicht)
+REFERENCE_WEIGHT = 2.0
+
+# Auch eine gering gewichtete Kategorie behaelt diesen Mindesteinfluss —
+# Schifffahrt am Anschlag ist nicht belanglos, nur weniger dringlich.
+MIN_RELEVANCE = 0.6
+
+# Ab diesem Score zaehlt eine Kategorie als "gleichzeitig erhoeht"
+BREADTH_THRESHOLD = 40.0
+
+# Wie stark Parallellagen den Restweg nach 100 schliessen (max. 50%)
+BREADTH_FACTOR = 0.12
+BREADTH_CAP = 0.5
+
+
+def _relevance(weight: float) -> float:
+    """Gewicht -> Einflussfaktor zwischen MIN_RELEVANCE und 1.0."""
+    ratio = min(1.0, (weight or 1.0) / REFERENCE_WEIGHT)
+    return MIN_RELEVANCE + (1.0 - MIN_RELEVANCE) * ratio
+
+
+def aggregate_overall_score(categories: dict) -> dict:
+    """Gesamtrisiko aus den Kategorie-Scores.
+
+    ``categories`` ist ``{name: {"score": float, "weight": float}}``.
+
+    Vorgehen: Jeder Score wird mit der Relevanz seiner Kategorie gewichtet.
+    Der hoechste dieser Werte bildet die Untergrenze — die Gesamtlage kann
+    nie harmloser sein als das schlimmste Einzelrisiko. Weitere erhoehte
+    Kategorien schliessen anteilig den Weg zu 100.
+    """
+    if not categories:
+        return {"score": 0.0, "driver": None, "effective": {}, "concurrent": []}
+
+    effective = {}
+    for name, data in categories.items():
+        score = float(data.get("score") or 0)
+        effective[name] = round(score * _relevance(data.get("weight", 1.0)), 1)
+
+    driver = max(effective, key=lambda k: effective[k])
+    top = effective[driver]
+
+    concurrent = sorted(
+        (n for n, v in effective.items() if n != driver and v >= BREADTH_THRESHOLD),
+        key=lambda n: -effective[n],
+    )
+    breadth = sum(effective[n] / 100.0 for n in concurrent)
+    bonus_share = min(BREADTH_CAP, BREADTH_FACTOR * breadth)
+
+    overall = top + (100.0 - top) * bonus_share
+
+    return {
+        "score": round(min(100.0, overall), 1),
+        "driver": driver,
+        "driver_score": top,
+        "effective": effective,
+        "concurrent": concurrent,
+    }
+
+
 def _contrib(source: str, source_type: str, value, points: float, reason: str, ts=None) -> dict:
     entry = {
         "source": source,
@@ -168,19 +235,24 @@ async def calculate_risk_scores() -> dict:
                 cat_data["weight"] = round(base * multiplier, 3)
                 cat_data["calibration_multiplier"] = multiplier
 
-        total = sum(s["score"] * s.get("weight", 1.0) for s in scores.values())
-        total_weight = sum(s.get("weight", 1.0) for s in scores.values())
-        overall = total / total_weight if total_weight > 0 else 0
+        aggregate = aggregate_overall_score(scores)
+        overall = aggregate["score"]
 
         overall_contributions = []
         for cat_name, cat_data in scores.items():
             w = cat_data.get("weight", 1.0)
+            eff = aggregate["effective"].get(cat_name, 0)
+            role = ""
+            if cat_name == aggregate["driver"]:
+                role = " — bestimmt die Gesamtlage"
+            elif cat_name in aggregate["concurrent"]:
+                role = " — verschaerft die Gesamtlage"
             overall_contributions.append(_contrib(
                 source=cat_name,
                 source_type="category_score",
                 value=cat_data["score"],
-                points=cat_data["score"] * w / total_weight if total_weight > 0 else 0,
-                reason=f"{cat_data['detail']} (Gewicht {w}x)",
+                points=eff,
+                reason=f"{cat_data['detail']} (Gewicht {w}x){role}",
             ))
             try:
                 cat_enum = AlertCategory(cat_name)
@@ -196,7 +268,9 @@ async def calculate_risk_scores() -> dict:
         await session.commit()
 
     scores["overall"] = {
-        "score": min(100, overall),
+        "score": overall,
+        "driver": aggregate["driver"],
+        "concurrent": aggregate["concurrent"],
         "contributions": overall_contributions,
     }
     return scores

@@ -245,18 +245,22 @@ class ApiService {
     }
   }
 
+  /// Lagebericht abrufen. Der Server liefert aus dem Zwischenspeicher und
+  /// antwortet daher sofort — die Erzeugung läuft im Hintergrund.
   Future<SituationReport?> fetchReport() async {
-    // Der LLM-Report kann dauern — grosszuegiger Timeout.
+    final data = await _getJson('/api/dashboard/report');
+    return data != null ? SituationReport.fromJson(data) : null;
+  }
+
+  /// Neuberechnung anstoßen, ohne auf das LLM zu warten
+  Future<bool> triggerReportGeneration() async {
     try {
-      final resp = await http.get(
-        Uri.parse('$baseUrl/api/dashboard/report'),
-        headers: {'Accept': 'application/json'},
-      ).timeout(const Duration(seconds: 90));
-      if (resp.statusCode == 200) {
-        return SituationReport.fromJson(
-            jsonDecode(resp.body) as Map<String, dynamic>);
-      }
-    } catch (_) {}
-    return null;
+      final resp = await http
+          .post(Uri.parse('$baseUrl/api/dashboard/report/generate'))
+          .timeout(const Duration(seconds: 15));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
   }
 }

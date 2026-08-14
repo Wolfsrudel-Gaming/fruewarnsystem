@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +21,13 @@ class _KiBerichtScreenState extends State<KiBerichtScreen>
   SituationReport? _report;
   bool _loading = false;
   String? _error;
+  Timer? _refetchTimer;
+
+  @override
+  void dispose() {
+    _refetchTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -42,6 +51,39 @@ class _KiBerichtScreenState extends State<KiBerichtScreen>
         _error = 'Bericht konnte nicht geladen werden';
       }
     });
+    // Läuft im Hintergrund eine Neuberechnung, später noch einmal nachsehen
+    if (report?.refreshing == true) _scheduleRefetch();
+  }
+
+  /// Der Bericht wird serverseitig im Hintergrund erzeugt (bis zu drei
+  /// Minuten). Statt darauf zu warten, holen wir ihn danach noch einmal.
+  void _scheduleRefetch() {
+    _refetchTimer?.cancel();
+    _refetchTimer = Timer(const Duration(seconds: 45), () async {
+      if (!mounted) return;
+      final api = context.read<AppState>().api;
+      final fresh = await api.fetchReport();
+      if (!mounted || fresh == null) return;
+      setState(() => _report = fresh);
+      if (fresh.refreshing) _scheduleRefetch();
+    });
+  }
+
+  Future<void> _regenerate() async {
+    final api = context.read<AppState>().api;
+    setState(() => _loading = true);
+    final ok = await api.triggerReportGeneration();
+    if (!mounted) return;
+    setState(() => _loading = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok
+            ? 'Bericht wird im Hintergrund erstellt — das dauert einen Moment'
+            : 'Neuberechnung konnte nicht gestartet werden'),
+        backgroundColor: ok ? AppColors.green : AppColors.red,
+      ),
+    );
+    if (ok) _scheduleRefetch();
   }
 
   @override
@@ -124,7 +166,7 @@ class _KiBerichtScreenState extends State<KiBerichtScreen>
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: _loading ? null : _load,
+                onPressed: _loading ? null : _regenerate,
                 icon: _loading
                     ? const SizedBox(
                         width: 16, height: 16,
@@ -163,9 +205,22 @@ class _KiBerichtScreenState extends State<KiBerichtScreen>
         const SizedBox(height: 8),
         if (_report != null)
           Center(
-            child: Text(
-              'Erstellt: ${_formatTime(_report!.generatedAt)}',
-              style: const TextStyle(color: AppColors.textDim, fontSize: 11),
+            child: Column(
+              children: [
+                Text(
+                  'Stand: ${_formatTime(_report!.generatedAt)}'
+                  '${_report!.ageMinutes >= 1 ? " · vor ${_report!.ageMinutes.round()} Min." : ""}',
+                  style: const TextStyle(color: AppColors.textDim, fontSize: 11),
+                ),
+                if (_report!.refreshing)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Neuer Bericht wird im Hintergrund erstellt…',
+                      style: TextStyle(color: AppColors.purple, fontSize: 11),
+                    ),
+                  ),
+              ],
             ),
           ),
       ],
