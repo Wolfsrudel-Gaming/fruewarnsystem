@@ -93,6 +93,22 @@ def test_hochwasser_schlaegt_direkt_auf_die_bereitschaft_durch():
     assert "Betreuungsdienst" in result["components"]
 
 
+def test_manv_wiegt_weniger_als_eine_betreuungslage():
+    """Troisdorf wirkt bei MANV mit, ist aber kein Rettungsdienststandort.
+
+    Eine Hochwasserlage bindet die Kueche und den Betreuungsdienst unmittelbar,
+    ein MANV zuerst den Rettungsdienst.
+    """
+    manv = assess_deployment(_scores(manv=80), LABELS)
+    wasser = assess_deployment(_scores(water=80), LABELS)
+    assert manv["value"] < wasser["value"]
+
+
+def test_gesundheit_wiegt_wenig_mangels_rettungsdienst():
+    gesundheit = assess_deployment(_scores(health=90), LABELS)
+    assert _level(gesundheit) != "einsatz_wahrscheinlich"
+
+
 def test_erdbeben_gleicher_hoehe_bleibt_deutlich_darunter():
     """Eine Erdbebenmeldung fuehrt in der Eifel praktisch nie zum Einsatz."""
     wasser = assess_deployment(_scores(water=85), LABELS)
@@ -101,10 +117,25 @@ def test_erdbeben_gleicher_hoehe_bleibt_deutlich_darunter():
     assert _level(beben) != "einsatz_wahrscheinlich"
 
 
-def test_nachrichten_allein_loesen_nie_eine_einsatzerwartung_aus():
-    """Nachrichten sind ein Indiz, nie ein Grund."""
-    result = assess_deployment(_scores(news=100), LABELS)
-    assert _level(result) in ("beobachtung", "ruhe")
+def test_nachrichten_sind_der_staerkste_fruehindikator():
+    """Korrektur aus der Einsatzerfahrung.
+
+    Ein frueheres Modell wertete Nachrichten als "Indiz, nie Grund" ab. Nach
+    Auskunft der Einheit ist die Presse der zuverlaessigste Vorbote: Was
+    Verpflegung braucht, dauert lange und bindet viele Kraefte — und genau
+    darueber wird berichtet.
+    """
+    ortsnah = assess_deployment(_scores(
+        news={"score": 85, "detail": "Grossbrand in Troisdorf"}), LABELS)
+    assert ortsnah["level"] == "einsatz_wahrscheinlich"
+
+
+def test_nachricht_ohne_ortsbezug_wiegt_weniger():
+    """Eine Meldung ueber irgendwo sagt wenig, eine ueber Troisdorf viel."""
+    fern = assess_deployment(_scores(news={"score": 85}), LABELS)
+    nah = assess_deployment(_scores(
+        news={"score": 85, "detail": "Lage in Siegburg"}), LABELS)
+    assert nah["value"] > fern["value"]
 
 
 def test_strahlung_wird_nie_abgewertet():
@@ -217,6 +248,97 @@ def test_einsatzgewichteter_score_ist_nachvollziehbar():
         "official_warning", {"score": 100, "area_scope": "ausserhalb"})
     erwartet = 100 * EINSATZBEZUG["official_warning"] * ORTSFAKTOR_AUSSERHALB
     assert abs(fern - erwartet) < 0.01
+
+
+# --- Evakuierung im Kerngebiet ---
+
+def test_evakuierung_in_troisdorf_bedeutet_einsatz():
+    """Erfahrungswert der Einheit: hier ist keine Abwaegung noetig."""
+    result = assess_deployment(_scores(
+        news={"score": 40, "detail": "Bombenfund, Evakuierung in Troisdorf"},
+    ), LABELS)
+    assert _level(result) == "einsatz_wahrscheinlich"
+    assert result["evacuation"]["ort"] == "Troisdorf"
+    assert "Betreuungsgespann" in result["components"]
+
+
+def test_evakuierung_in_siegburg_zaehlt_wie_das_eigene_stadtgebiet():
+    result = assess_deployment(_scores(
+        official_warning={"score": 35, "detail": "Räumung mehrerer Straßen in Siegburg"},
+    ), LABELS)
+    assert _level(result) == "einsatz_wahrscheinlich"
+    assert result["evacuation"]["ort"] == "Siegburg"
+
+
+def test_evakuierung_ausserhalb_des_kerngebiets_loest_nichts_aus():
+    """Ein Bombenfund in Koeln ist Koelner Sache."""
+    result = assess_deployment(_scores(
+        news={"score": 40, "detail": "Bombenfund mit Evakuierung in Koeln-Kalk"},
+    ), LABELS)
+    assert result["evacuation"] is None
+    assert _level(result) != "einsatz_wahrscheinlich"
+
+
+def test_ortsname_ohne_evakuierung_loest_nichts_aus():
+    """Beide Hinweise muessen zusammenkommen, sonst gaebe es Dauerfeuer."""
+    result = assess_deployment(_scores(
+        news={"score": 30, "detail": "Stadtfest in Troisdorf gut besucht"},
+    ), LABELS)
+    assert result["evacuation"] is None
+
+
+def test_evakuierung_wird_auch_in_beitraegen_erkannt():
+    """Die Ausloeser stecken oft in den Einzelbeitraegen, nicht im Kurztext."""
+    result = assess_deployment(_scores(
+        news={
+            "score": 30,
+            "detail": "3 relevante Meldungen",
+            "contributions": [
+                {"source": "Rundschau", "reason": "Kellerbrand"},
+                {"source": "GA", "reason": "Wohnhaus in Troisdorf geräumt"},
+            ],
+        },
+    ), LABELS)
+    assert result["evacuation"] is not None
+
+
+def test_evakuierung_senkt_eine_hohe_bewertung_nicht():
+    """Der Mindestwert ist eine Untergrenze, keine Deckelung."""
+    ohne = assess_deployment(_scores(water=95), LABELS)
+    mit = assess_deployment(_scores(
+        water={"score": 95, "detail": "Evakuierung in Troisdorf"}), LABELS)
+    assert mit["value"] >= ohne["value"]
+
+
+def test_evakuierungsbegruendung_steht_an_erster_stelle():
+    result = assess_deployment(_scores(
+        news={"score": 40, "detail": "Evakuierung in Troisdorf"}), LABELS)
+    assert "Evakuierung" in result["reasons"][0]
+
+
+# --- Verpflegungsprofil ---
+
+def test_brandlage_bringt_die_kueche_ins_spiel():
+    """Haeufigster Einsatzanlass: Verpflegung der Einsatzkraefte."""
+    result = assess_deployment(_scores(fire=85), LABELS)
+    assert any("Verpflegung" in k for k in result["components"])
+
+
+def test_verpflegung_steht_bei_brand_vor_der_betreuung():
+    """Die Reihenfolge spiegelt, was der Standort tatsaechlich stellt."""
+    result = assess_deployment(_scores(fire=85), LABELS)
+    assert "Verpflegung" in result["components"][0]
+
+
+def test_veranstaltungen_bringen_den_sanitaetsdienst():
+    result = assess_deployment(_scores(events=80), LABELS)
+    assert "Sanitaetsdienst" in result["components"]
+
+
+def test_begruendung_erklaert_das_standortprofil():
+    """Wer die Zahl sieht, soll auch verstehen, warum sie gedaempft ist."""
+    result = assess_deployment(_scores(manv=80), LABELS)
+    assert any("Rettungsdienststandort" in r for r in result["reasons"])
 
 
 if __name__ == "__main__":

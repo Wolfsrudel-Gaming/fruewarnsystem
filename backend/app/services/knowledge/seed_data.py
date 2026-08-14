@@ -766,3 +766,177 @@ alarmiert werden.
         trigger={"categories": ["health"], "min_score": 55},
     ),
 ]
+
+
+# ======================================================================
+# Eigenes Wissen des DRK Troisdorf
+# ======================================================================
+#
+# Diese Eintraege stammen nicht aus oeffentlichen Dokumenten, sondern aus der
+# Kenntnis der eigenen Einheit. Fuer die Lagebewertung sind sie die
+# verlaesslichste Quelle ueberhaupt — oeffentlich belegbar sind sie nicht.
+# Deshalb ``is_official=False``: nicht weniger wert, nur anders herkommend.
+#
+# Sie korrigieren mehrere Annahmen, die aus den oeffentlichen Quellen allein
+# falsch gezogen worden waeren. Vor allem: Troisdorf ist Verpflegungs- und
+# Betreuungsstandort, kein Rettungsdienststandort.
+
+EIGEN = "DRK Troisdorf — eigene Angabe"
+
+
+def _local(seed_key, kind, scope, title, body, *, categories=None, tags=None,
+           trigger=None, facts=None):
+    return _e(seed_key, kind, scope, title, body, categories=categories,
+              tags=tags, trigger=trigger, facts=facts, source=EIGEN,
+              source_url=None, source_date=None, is_official=False)
+
+
+LOCAL_ENTRIES = [
+
+    _local(
+        "eigen.profil.troisdorf", "organisation", "troisdorf",
+        "DRK Troisdorf — Einsatzprofil",
+        """
+Troisdorf ist vorrangig VERPFLEGUNGSSTANDORT, dazu Betreuungsstandort.
+Kein Rettungsdienststandort.
+
+Zustaendig fuer Verpflegungslagen von oertlich bis ueberoertlich sowie fuer
+Betreuungslagen. Bei einem Massenanfall von Verletzten wirkt Troisdorf mit,
+stellt dabei aber keine rettungsdienstliche Komponente.
+
+Helferinnen und Helfer mit Sanitaetsausbildung sind vorhanden. Sie werden
+ueberwiegend im Sanitaetsdienst bei Veranstaltungen eingesetzt, auch
+aushilfsweise in Nachbargemeinden.
+
+Ein kleiner Techniktrupp ist vorhanden. Seine Aufgabe ist vor allem die
+Versorgung der eigenen in den Einsatz gebrachten Mittel, nicht die
+selbststaendige technische Hilfeleistung.
+
+Fuer die Lagebewertung heisst das: Eine Lage wird fuer Troisdorf nicht dadurch
+relevant, dass Verletzte zu erwarten sind, sondern dadurch, dass ueber laengere
+Zeit Menschen versorgt werden muessen — Einsatzkraefte oder Betroffene.
+        """,
+        categories=["manv", "events", "fire", "water", "power"],
+        tags=["Verpflegung", "Betreuung", "Einsatzprofil", "Techniktrupp",
+              "Sanitaetsdienst"],
+    ),
+
+    _local(
+        "eigen.fahrzeuge.troisdorf", "ressource", "troisdorf",
+        "DRK Troisdorf — Fahrzeuge und Material",
+        """
+- 1 MTF (Mannschaftstransportfahrzeug)
+- 2 MZF (Mehrzweckfahrzeuge)
+- 1 Kuechenanhaenger — eine einsatzbereite mobile Kueche mit Kuehlschrank,
+  Kochplatte, Konvektomat und Gefrierschrank. Grosser Anhaenger, mobil als
+  vollwertige Kueche einsetzbar.
+- 1 Feldkueche
+- 1 Betreuungsgespann, in Troisdorf stationiert. Es kann vom Land NRW in den
+  Einsatz gebracht werden — damit reicht die Verwendung ueber den Kreis hinaus.
+
+Das Betreuungsgespann ist der Grund, warum Troisdorf auch bei Lagen weit
+ausserhalb des Kreises gezogen werden kann: Es ist eine Landesressource an
+einem Troisdorfer Standort.
+        """,
+        categories=["fire", "water", "power", "events", "manv"],
+        tags=["MTF", "MZF", "Kuechenanhaenger", "Feldkueche",
+              "Betreuungsgespann", "Konvektomat", "Landesressource"],
+        facts={"mtf": 1, "mzf": 2, "kuechenanhaenger": 1, "feldkueche": 1,
+               "betreuungsgespann": 1},
+    ),
+
+    _local(
+        "eigen.ausloeser.brand", "ausloeser", "troisdorf",
+        "Haeufigster Einsatzanlass: Verpflegung bei Brandereignissen",
+        """
+Die mit Abstand haeufigste Einsatzgrundlage in Troisdorf sind
+BRANDEREIGNISSE, bei denen Verpflegung fuer die Einsatzkraefte gestellt wird.
+
+Massgeblich ist dabei nicht die Groesse des Brandes an sich, sondern die
+EINSATZDAUER: Ein Feuer, das nach einer Stunde erledigt ist, braucht keine
+Verpflegung. Ein Grossbrand ueber mehrere Schichten braucht sie sicher.
+
+Achtung bei der Datenlage: Die Kategorie "Waldbrand" dieses Systems misst den
+Waldbrandgefahrenindex des DWD — also die GEFAHR, nicht ein laufendes Feuer.
+Tatsaechliche Brandereignisse erreichen das System ueber die Nachrichten und
+ueber behoerdliche Warnungen. Ein hoher Gefahrenindex ist ein Vorbote, kein
+Ereignis.
+        """,
+        categories=["fire", "news"],
+        tags=["Brand", "Verpflegung", "Einsatzkraefteverpflegung",
+              "Grossbrand", "Einsatzdauer"],
+        trigger={"categories": ["fire", "news"], "min_score": 50},
+    ),
+
+    _local(
+        "eigen.ausloeser.nachrichten", "ausloeser", "troisdorf",
+        "Nachrichten sind der staerkste Einsatzindikator",
+        """
+Erfahrungswert der Einheit: Der zuverlaessigste Vorbote eines Einsatzes ist
+die Presse. Ereignisse, die gross genug sind, um das DRK Troisdorf in den
+Einsatz zu bringen, rufen fast immer auch die Presse auf den Plan.
+
+Der Zusammenhang ist kein Zufall, sondern folgt aus dem Einsatzprofil: Was
+Verpflegung oder Betreuung braucht, dauert lange und bindet viele Kraefte —
+und genau das ist auch das, worueber berichtet wird. Kurze Einsaetze ohne
+Pressewirkung brauchen umgekehrt selten Verpflegung.
+
+Deshalb wiegt die Kategorie Nachrichten fuer Troisdorf ungewoehnlich schwer.
+Wichtig bleibt der Ortsbezug: Eine Meldung ueber ein Ereignis in einem anderen
+Kreis sagt wenig, eine ueber Troisdorf oder Siegburg sehr viel.
+        """,
+        categories=["news"],
+        tags=["Presse", "Nachrichten", "Fruehindikator", "Erfahrungswert"],
+        trigger={"categories": ["news"], "min_score": 45},
+    ),
+
+    _local(
+        "eigen.ausloeser.evakuierung", "ausloeser", "troisdorf",
+        "Evakuierungen in Troisdorf und Siegburg — Einsatz nahezu sicher",
+        """
+Bei Evakuierungen in TROISDORF oder SIEGBURG kann man sehr sicher davon
+ausgehen, dass das DRK Troisdorf in den Einsatz geht.
+
+Typische Anlaesse: Bombenfund und Entschaerfung, Grossbrand mit Raeumung,
+Gebaeudeschaden, Hochwasser, Gefahrstoffaustritt.
+
+Die Aufgabe ist dann Betreuung der Evakuierten und deren Verpflegung — beides
+Kernaufgaben des Standorts. Anders als bei vielen anderen Lagen ist hier keine
+Abwaegung noetig: Evakuierung im Kerngebiet bedeutet Einsatz.
+
+Siegburg zaehlt dabei wie das eigene Stadtgebiet, obwohl es eine andere
+Kommune ist — die Naehe und die eingespielte Zusammenarbeit machen den
+Unterschied.
+        """,
+        categories=["water", "fire", "official_warning", "news", "power"],
+        tags=["Evakuierung", "Raeumung", "Bombenfund", "Entschaerfung",
+              "Siegburg", "Troisdorf", "Kerngebiet"],
+        trigger={"categories": ["official_warning", "news"], "min_score": 40},
+    ),
+
+    _local(
+        "eigen.ausloeser.veranstaltungen", "ausloeser", "troisdorf",
+        "Sanitaetsdienst bei Veranstaltungen, auch in Nachbargemeinden",
+        """
+Der Sanitaetsdienst bei Veranstaltungen ist der planbare Teil des
+Einsatzgeschehens. Troisdorfer Kraefte helfen dabei auch in Nachbargemeinden
+aus.
+
+Fuer die Bewertung bedeutet das: Bei Veranstaltungslagen ist der Ortsbezug
+weiter zu fassen als sonst — eine Grossveranstaltung in einer Nachbargemeinde
+kann Troisdorfer Kraefte binden, ohne dass in Troisdorf selbst etwas
+stattfindet.
+
+Kritisch wird es, wenn eine Veranstaltung mit einer Wetterlage zusammenfaellt.
+Dann steht bereits Personal vor Ort, und aus dem geplanten Sanitaetsdienst
+wird eine Schadenslage mit zusaetzlichem Verpflegungs- und Betreuungsbedarf.
+        """,
+        categories=["events", "weather"],
+        tags=["Sanitaetsdienst", "Veranstaltung", "Nachbargemeinde",
+              "Aushilfe"],
+        trigger={"categories": ["events"], "min_score": 40},
+    ),
+]
+
+# Alles, was beim Start eingespielt wird
+ALL_ENTRIES = SEED_ENTRIES + LOCAL_ENTRIES

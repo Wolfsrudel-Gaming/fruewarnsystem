@@ -17,7 +17,9 @@ from app.models.schemas import KnowledgeKind, KnowledgeScope
 from app.services.knowledge.knowledge_base import (
     MIN_TERM_LENGTH, SCOPE_WEIGHT, _tokens, score_entry,
 )
-from app.services.knowledge.seed_data import SEED_ENTRIES
+from app.services.knowledge.seed_data import (
+    ALL_ENTRIES, LOCAL_ENTRIES, SEED_ENTRIES,
+)
 
 
 class FakeEntry:
@@ -34,7 +36,7 @@ class FakeEntry:
 
 
 def _entry(seed_key):
-    for e in SEED_ENTRIES:
+    for e in ALL_ENTRIES:
         if e["seed_key"] == seed_key:
             return e
     raise AssertionError(f"Eintrag {seed_key} fehlt")
@@ -43,40 +45,55 @@ def _entry(seed_key):
 # --- Grundbestand: Vollstaendigkeit und Stimmigkeit ---
 
 def test_seed_keys_sind_eindeutig():
-    keys = [e["seed_key"] for e in SEED_ENTRIES]
+    keys = [e["seed_key"] for e in ALL_ENTRIES]
     assert len(keys) == len(set(keys))
 
 
 def test_alle_eintraege_nutzen_gueltige_arten_und_bereiche():
-    for e in SEED_ENTRIES:
+    for e in ALL_ENTRIES:
         KnowledgeKind(e["kind"])
         KnowledgeScope(e["scope"])
 
 
 def test_jeder_eintrag_hat_einen_belegten_inhalt():
-    for e in SEED_ENTRIES:
+    for e in ALL_ENTRIES:
         assert e["title"].strip(), e["seed_key"]
         assert len(e["body"]) > 100, f"{e['seed_key']} ist zu duenn"
         assert e["source"], f"{e['seed_key']} ohne Quelle"
 
 
 def test_recherchierte_eintraege_sind_als_offiziell_markiert():
-    """Der Grundbestand stammt aus oeffentlichen Dokumenten. Die Trennung zu
-    selbst eingepflegtem Wissen muss sichtbar bleiben."""
+    """Der recherchierte Teil stammt aus oeffentlichen Dokumenten."""
     assert all(e["is_official"] for e in SEED_ENTRIES)
+
+
+def test_eigenes_wissen_ist_nicht_als_offiziell_markiert():
+    """Wissen der Einheit ist fuer die Bewertung die verlaesslichste Quelle,
+    oeffentlich belegbar ist es aber nicht. Die Herkunft muss unterscheidbar
+    bleiben — sonst weiss spaeter niemand mehr, was nachpruefbar ist."""
+    assert all(not e["is_official"] for e in LOCAL_ENTRIES)
+    assert all("DRK Troisdorf" in (e["source"] or "") for e in LOCAL_ENTRIES)
+    assert all(e["source_url"] is None for e in LOCAL_ENTRIES)
+
+
+def test_eigenes_und_recherchiertes_wissen_ueberschneidet_sich_nicht():
+    seed = {e["seed_key"] for e in SEED_ENTRIES}
+    local = {e["seed_key"] for e in LOCAL_ENTRIES}
+    assert not (seed & local)
+    assert len(ALL_ENTRIES) == len(SEED_ENTRIES) + len(LOCAL_ENTRIES)
 
 
 def test_kategorien_sind_echte_scoring_kategorien():
     """Ein Tippfehler hier wuerde den Eintrag unsichtbar machen."""
     from app.services.knowledge.assessment import EINSATZBEZUG
     erlaubt = set(EINSATZBEZUG) | {"custom"}
-    for e in SEED_ENTRIES:
+    for e in ALL_ENTRIES:
         for cat in e["categories"]:
             assert cat in erlaubt, f"{e['seed_key']}: unbekannte Kategorie {cat}"
 
 
 def test_trigger_bedingungen_sind_wohlgeformt():
-    for e in SEED_ENTRIES:
+    for e in ALL_ENTRIES:
         trigger = e["trigger"]
         if not trigger:
             continue
@@ -156,15 +173,51 @@ def test_nachbarkreis_regel_ist_hinterlegt():
 
 
 def test_jeder_bereich_ist_vertreten():
-    bereiche = {e["scope"] for e in SEED_ENTRIES}
+    bereiche = {e["scope"] for e in ALL_ENTRIES}
     assert bereiche == {"troisdorf", "rhein_sieg", "nrw", "bund"}
 
 
 def test_die_wichtigsten_wissensarten_sind_vertreten():
-    arten = {e["kind"] for e in SEED_ENTRIES}
+    arten = {e["kind"] for e in ALL_ENTRIES}
     for pflicht in ("doktrin", "organisation", "gefahrenobjekt",
-                    "eskalationsstufe", "ausloeser"):
+                    "eskalationsstufe", "ausloeser", "ressource"):
         assert pflicht in arten
+
+
+# --- Eigenes Wissen des Standorts ---
+
+def test_einsatzprofil_haelt_fest_dass_troisdorf_kein_rd_standort_ist():
+    body = _entry("eigen.profil.troisdorf")["body"]
+    assert "VERPFLEGUNGSSTANDORT" in body
+    assert "Kein Rettungsdienststandort" in body
+
+
+def test_fahrzeugbestand_ist_vollstaendig_erfasst():
+    facts = _entry("eigen.fahrzeuge.troisdorf")["facts"]
+    assert facts == {"mtf": 1, "mzf": 2, "kuechenanhaenger": 1,
+                     "feldkueche": 1, "betreuungsgespann": 1}
+
+
+def test_betreuungsgespann_ist_als_landesressource_vermerkt():
+    """Der Grund, warum Troisdorf auch weit ausserhalb gezogen werden kann."""
+    body = _entry("eigen.fahrzeuge.troisdorf")["body"]
+    assert "Land NRW" in body and "Betreuungsgespann" in body
+
+
+def test_brandeintrag_warnt_vor_der_verwechslung_von_gefahr_und_ereignis():
+    """Die Kategorie Waldbrand misst den Gefahrenindex, kein laufendes Feuer."""
+    body = _entry("eigen.ausloeser.brand")["body"]
+    assert "Waldbrandgefahrenindex" in body or "GEFAHR" in body
+
+
+def test_nachrichteneintrag_begruendet_die_hohe_gewichtung():
+    body = _entry("eigen.ausloeser.nachrichten")["body"]
+    assert "Presse" in body
+
+
+def test_evakuierungseintrag_nennt_troisdorf_und_siegburg():
+    body = _entry("eigen.ausloeser.evakuierung")["body"]
+    assert "TROISDORF" in body and "SIEGBURG" in body
 
 
 # --- Auswahl zur Lage ---

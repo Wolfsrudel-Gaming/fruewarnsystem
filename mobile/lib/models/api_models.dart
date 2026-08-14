@@ -813,6 +813,10 @@ class DeploymentAssessment {
   /// Belegstellen aus der Wissensdatenbank
   final List<KnowledgeSummary> knowledge;
 
+  /// Erkannter Hinweis auf eine Evakuierung im Kerngebiet (Troisdorf oder
+  /// Siegburg). Dann ist der Einsatz erfahrungsgemäß so gut wie sicher.
+  final String? evacuationOrt;
+
   DeploymentAssessment({
     required this.level,
     required this.label,
@@ -825,7 +829,10 @@ class DeploymentAssessment {
     this.components = const [],
     this.reasons = const [],
     this.knowledge = const [],
+    this.evacuationOrt,
   });
+
+  bool get hasEvacuation => evacuationOrt != null;
 
   /// Ab hier ist Handeln angezeigt, nicht nur Zurkenntnisnahme
   bool get isActionable =>
@@ -847,6 +854,8 @@ class DeploymentAssessment {
       knowledge: (json['knowledge'] as List? ?? [])
           .map((k) => KnowledgeSummary.fromJson(k as Map<String, dynamic>))
           .toList(),
+      evacuationOrt:
+          (json['evacuation'] as Map<String, dynamic>?)?['ort'] as String?,
     );
   }
 }

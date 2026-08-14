@@ -74,6 +74,38 @@ class EinsatzKarte extends StatelessWidget {
                   Icon(Icons.chevron_right, color: stil.color, size: 20),
               ],
             ),
+            // Evakuierung im Kerngebiet ist der eine Fall, bei dem keine
+            // Abwägung nötig ist — das gehört ganz nach oben.
+            if (assessment.hasEvacuation) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppColors.drkRed.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.groups,
+                        color: AppColors.drkRedAccent, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Hinweis auf Evakuierung in '
+                        '${assessment.evacuationOrt} — Betreuung und '
+                        'Verpflegung erfahrungsgemäß sicher',
+                        style: const TextStyle(
+                            color: AppColors.drkRedAccent,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w500,
+                            height: 1.35),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (assessment.description.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text(

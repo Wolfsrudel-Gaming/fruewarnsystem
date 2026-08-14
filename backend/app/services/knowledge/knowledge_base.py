@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from app.models.database import async_session
 from app.models.schemas import KnowledgeEntry, KnowledgeKind, KnowledgeScope
-from app.services.knowledge.seed_data import SEED_ENTRIES
+from app.services.knowledge.seed_data import ALL_ENTRIES
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ async def seed_knowledge_base() -> dict:
             )).scalars().all()
         }
 
-        for data in SEED_ENTRIES:
+        for data in ALL_ENTRIES:
             key = data["seed_key"]
             row = existing.get(key)
             values = {
@@ -82,7 +82,7 @@ async def seed_knowledge_base() -> dict:
         await session.commit()
 
     logger.info("Wissensdatenbank: %d neu, %d aktualisiert", created, updated)
-    return {"created": created, "updated": updated, "total": len(SEED_ENTRIES)}
+    return {"created": created, "updated": updated, "total": len(ALL_ENTRIES)}
 
 
 def _tokens(text: str) -> set:

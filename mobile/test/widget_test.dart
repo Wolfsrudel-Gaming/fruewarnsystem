@@ -142,6 +142,21 @@ void main() {
       'value': 24.3,
     });
     expect(a.isActionable, false);
+    expect(a.hasEvacuation, false);
+  });
+
+  test('DeploymentAssessment surfaces evacuations in the core area', () {
+    // Evakuierung in Troisdorf oder Siegburg: Einsatz erfahrungsgemaess sicher.
+    final a = DeploymentAssessment.fromJson({
+      'level': 'einsatz_wahrscheinlich',
+      'label': 'Einsatz wahrscheinlich',
+      'value': 82.0,
+      'evacuation': {'category': 'news', 'ort': 'Siegburg'},
+      'components': ['Betreuungsdienst', 'Verpflegung', 'Betreuungsgespann'],
+    });
+    expect(a.hasEvacuation, true);
+    expect(a.evacuationOrt, 'Siegburg');
+    expect(a.components, contains('Betreuungsgespann'));
   });
 
   test('KnowledgeEntryData distinguishes researched from own entries', () {

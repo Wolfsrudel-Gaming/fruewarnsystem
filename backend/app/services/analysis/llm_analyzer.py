@@ -19,19 +19,39 @@ gesamter Rhein-Sieg-Kreis, sowie Köln und Bonn bei Großlagen.
 Relevante Gewässer: Rhein, Sieg, Agger, Pleisbach, Swistbach.
 Besondere Gebiete: Wahner Heide (Waldbrandgefahr), ICE-Strecke Köln-Frankfurt, A3/A59/A565.
 
-DRK-typische Einsatzszenarien:
-- Hochwasser / Überschwemmung (Sandsäcke, Evakuierung, Betreuung)
-- Niedrigwasser / Dürre (erhöhte Waldbrandgefahr, Trinkwasserversorgung, Fischsterben)
-- Unwetter / Sturm (Verletzte, Evakuierung, Notunterkünfte)
-- Waldbrand (Verpflegung Einsatzkräfte, Evakuierung) - besonders bei Dürre/Niedrigwasser
-- Massenanfall von Verletzten (MANV) bei Unfällen oder Veranstaltungen
-- Großveranstaltungen (Sanitätsdienst)
-- Stromausfall / Infrastrukturausfall (Betreuung)
-- Hitzewelle / Dürre (Versorgung, Trinkwasser, Kühlräume, vulnerable Gruppen)
-- Trinkwassernotstand (Wasserverteilung, mobile Versorgung)
-- Gefahrgutunfall
-- Bombenentschärfung (Evakuierung, Betreuung)
-- Bahnunglück / Schwere Verkehrsunfälle
+EINSATZPROFIL DES STANDORTS TROISDORF — entscheidend für deine Bewertung:
+Troisdorf ist vorrangig VERPFLEGUNGSSTANDORT, dazu Betreuungsstandort.
+KEIN Rettungsdienststandort.
+
+Vorhandene Mittel: 1 MTF, 2 MZF, Küchenanhänger (mobile Vollküche mit
+Konvektomat, Kühl- und Gefrierschrank), Feldküche, sowie ein in Troisdorf
+stationiertes Betreuungsgespann, das vom Land NRW eingesetzt werden kann.
+Dazu ein kleiner Techniktrupp zur Versorgung der eigenen Mittel.
+
+Entscheidend ist deshalb NICHT, ob Verletzte zu erwarten sind, sondern ob über
+längere Zeit Menschen versorgt werden müssen — Einsatzkräfte oder Betroffene.
+Ein Ereignis mit zehn Verletzten und zwei Stunden Dauer ist weniger relevant
+als ein Großbrand über mehrere Schichten.
+
+Einsatzszenarien, nach tatsächlicher Häufigkeit:
+1. BRANDEREIGNISSE mit Verpflegung der Einsatzkräfte — der häufigste Anlass.
+   Maßgeblich ist die Einsatzdauer, nicht die Schadenshöhe.
+2. EVAKUIERUNGEN in Troisdorf oder Siegburg (Bombenfund/Entschärfung,
+   Großbrand, Gebäudeschaden, Hochwasser, Gefahrstoff) — Einsatz nahezu sicher,
+   Betreuung und Verpflegung der Evakuierten.
+3. Hochwasser / Überschwemmung (Betreuung, Verpflegung, Evakuierung)
+4. Stromausfall / Infrastrukturausfall (Betreuung, Verpflegung)
+5. Unwetter / Sturm mit längerer Einsatzlage
+6. Großveranstaltungen (Sanitätsdienst, auch aushilfsweise in Nachbargemeinden)
+7. MANV — Troisdorf wirkt mit (Betreuung/Verpflegung), stellt aber keine
+   rettungsdienstliche Komponente
+8. Hitzewelle / Dürre (Versorgung, vulnerable Gruppen)
+9. Trinkwassernotstand (Wasserverteilung, mobile Versorgung)
+
+Bewerte eine Meldung hoch, wenn sie auf eine LANG ANDAUERNDE Lage mit vielen
+gebundenen Einsatzkräften oder vielen Betroffenen hindeutet. Bewerte sie
+niedrig, wenn das Ereignis schnell abgearbeitet ist — auch wenn es dramatisch
+klingt.
 
 WICHTIG: Niedrige Pegelstände sind ebenso relevant wie Hochwasser!
 Niedrigwasser deutet auf Dürre hin → erhöhte Waldbrandgefahr (besonders Wahner Heide),
