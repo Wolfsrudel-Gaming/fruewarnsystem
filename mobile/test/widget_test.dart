@@ -111,6 +111,57 @@ void main() {
     expect(d.title, 'Kellerauspumpen');
   });
 
+  test('DeploymentAssessment parses and flags actionable levels', () {
+    final a = DeploymentAssessment.fromJson({
+      'level': 'bereitstellung_wahrscheinlich',
+      'label': 'Bereitstellung wahrscheinlich',
+      'description': 'Kraefte werden voraussichtlich bereitgestellt.',
+      'value': 68.4,
+      'driver': 'water',
+      'driver_label': 'Hochwasser',
+      'driver_score': 76.0,
+      'contributing': ['weather'],
+      'components': ['Betreuungsdienst', 'Technik und Sicherheit'],
+      'reasons': ['Hochwasser steht bei 76/100.'],
+      'knowledge': [
+        {'id': 3, 'title': 'Betreuungsplatz 500', 'kind': 'organisation',
+         'source': 'Landeskonzept NRW', 'is_official': true},
+      ],
+    });
+    expect(a.isActionable, true);
+    expect(a.driverLabel, 'Hochwasser');
+    expect(a.components, contains('Betreuungsdienst'));
+    expect(a.knowledge.single.isOfficial, true);
+  });
+
+  test('DeploymentAssessment stays calm for distant situations', () {
+    // Der Fall Dueren: schwere Lage, aber nicht die eigene Zustaendigkeit.
+    final a = DeploymentAssessment.fromJson({
+      'level': 'beobachtung',
+      'label': 'Beobachtung',
+      'value': 24.3,
+    });
+    expect(a.isActionable, false);
+  });
+
+  test('KnowledgeEntryData distinguishes researched from own entries', () {
+    final seed = KnowledgeEntryData.fromJson({
+      'id': 1, 'kind': 'doktrin', 'scope': 'rhein_sieg',
+      'title': 'MANV-Stufen', 'body': 'MANV10 bis MANV50',
+      'is_official': true, 'is_seed': true,
+      'source': 'Rettungsdienstbedarfsplan 2023',
+    });
+    final eigen = KnowledgeEntryData.fromJson({
+      'id': 2, 'kind': 'ausloeser', 'scope': 'troisdorf',
+      'title': 'Eigenes Stichwort', 'body': 'Intern gepflegt',
+      'is_official': false, 'is_seed': false,
+    });
+    expect(seed.isSeed, true);
+    expect(seed.isOfficial, true);
+    expect(eigen.isSeed, false);
+    expect(kKnowledgeKindLabels[eigen.kind], 'Auslöser');
+  });
+
   test('ScoreHistoryPoint parses server history format', () {
     final p = ScoreHistoryPoint.fromJson({
       'category': 'fire',

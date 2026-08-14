@@ -783,3 +783,173 @@ class PowerOutageReport {
     );
   }
 }
+
+/// Einsatzerwartung für die Bereitschaft Troisdorf.
+///
+/// Bewusst getrennt vom Gesamtrisiko: Das Gesamtrisiko beschreibt die Lage,
+/// die Einsatzerwartung ihre Folgen für die eigene Einheit. Ein Großbrand im
+/// Nachbarkreis kann ein hohes Gesamtrisiko und trotzdem eine niedrige
+/// Einsatzerwartung ergeben — Troisdorf wird dafür nicht gezogen.
+class DeploymentAssessment {
+  /// ruhe | beobachtung | bereitstellung_moeglich |
+  /// bereitstellung_wahrscheinlich | einsatz_wahrscheinlich
+  final String level;
+  final String label;
+  final String description;
+  final double value;
+  final String? driver;
+  final String? driverLabel;
+  final double driverScore;
+
+  /// Gleichzeitig erhöhte Kategorien, die die Lage verschärfen
+  final List<String> contributing;
+
+  /// Voraussichtlich gebrauchte DRK-Komponenten
+  final List<String> components;
+
+  /// Nachvollziehbare Begründung, Satz für Satz
+  final List<String> reasons;
+
+  /// Belegstellen aus der Wissensdatenbank
+  final List<KnowledgeSummary> knowledge;
+
+  DeploymentAssessment({
+    required this.level,
+    required this.label,
+    required this.description,
+    required this.value,
+    this.driver,
+    this.driverLabel,
+    this.driverScore = 0,
+    this.contributing = const [],
+    this.components = const [],
+    this.reasons = const [],
+    this.knowledge = const [],
+  });
+
+  /// Ab hier ist Handeln angezeigt, nicht nur Zurkenntnisnahme
+  bool get isActionable =>
+      level == 'einsatz_wahrscheinlich' ||
+      level == 'bereitstellung_wahrscheinlich';
+
+  factory DeploymentAssessment.fromJson(Map<String, dynamic> json) {
+    return DeploymentAssessment(
+      level: json['level'] as String? ?? 'ruhe',
+      label: json['label'] as String? ?? 'Unbekannt',
+      description: json['description'] as String? ?? '',
+      value: (json['value'] as num?)?.toDouble() ?? 0,
+      driver: json['driver'] as String?,
+      driverLabel: json['driver_label'] as String?,
+      driverScore: (json['driver_score'] as num?)?.toDouble() ?? 0,
+      contributing: (json['contributing'] as List? ?? []).cast<String>(),
+      components: (json['components'] as List? ?? []).cast<String>(),
+      reasons: (json['reasons'] as List? ?? []).cast<String>(),
+      knowledge: (json['knowledge'] as List? ?? [])
+          .map((k) => KnowledgeSummary.fromJson(k as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+/// Ein Eintrag der DRK-Wissensdatenbank.
+class KnowledgeEntryData {
+  final int id;
+  final String kind;
+  final String scope;
+  final String title;
+  final String body;
+  final List<String> categories;
+  final List<String> tags;
+  final Map<String, dynamic>? facts;
+  final String? source;
+  final String? sourceUrl;
+  final String? sourceDate;
+
+  /// Aus öffentlicher, belegter Quelle recherchiert
+  final bool isOfficial;
+
+  /// Teil des mitgelieferten Grundbestands (nicht löschbar)
+  final bool isSeed;
+  final String? createdBy;
+
+  KnowledgeEntryData({
+    required this.id,
+    required this.kind,
+    required this.scope,
+    required this.title,
+    required this.body,
+    this.categories = const [],
+    this.tags = const [],
+    this.facts,
+    this.source,
+    this.sourceUrl,
+    this.sourceDate,
+    this.isOfficial = false,
+    this.isSeed = false,
+    this.createdBy,
+  });
+
+  factory KnowledgeEntryData.fromJson(Map<String, dynamic> json) {
+    return KnowledgeEntryData(
+      id: json['id'] as int? ?? 0,
+      kind: json['kind'] as String? ?? 'doktrin',
+      scope: json['scope'] as String? ?? 'rhein_sieg',
+      title: json['title'] as String? ?? '',
+      body: json['body'] as String? ?? '',
+      categories: (json['categories'] as List? ?? []).cast<String>(),
+      tags: (json['tags'] as List? ?? []).cast<String>(),
+      facts: json['facts'] as Map<String, dynamic>?,
+      source: json['source'] as String?,
+      sourceUrl: json['source_url'] as String?,
+      sourceDate: json['source_date'] as String?,
+      isOfficial: json['is_official'] as bool? ?? false,
+      isSeed: json['is_seed'] as bool? ?? false,
+      createdBy: json['created_by'] as String?,
+    );
+  }
+}
+
+/// Kurzform ohne Fließtext — für Belegstellen unter der Einsatzerwartung.
+class KnowledgeSummary {
+  final int id;
+  final String title;
+  final String kind;
+  final String? source;
+  final bool isOfficial;
+
+  KnowledgeSummary({
+    required this.id,
+    required this.title,
+    required this.kind,
+    this.source,
+    this.isOfficial = false,
+  });
+
+  factory KnowledgeSummary.fromJson(Map<String, dynamic> json) {
+    return KnowledgeSummary(
+      id: json['id'] as int? ?? 0,
+      title: json['title'] as String? ?? '',
+      kind: json['kind'] as String? ?? '',
+      source: json['source'] as String?,
+      isOfficial: json['is_official'] as bool? ?? false,
+    );
+  }
+}
+
+/// Anzeigenamen der Wissensarten
+const Map<String, String> kKnowledgeKindLabels = {
+  'doktrin': 'Grundlage',
+  'organisation': 'Einheiten',
+  'gefahrenobjekt': 'Gefahrenschwerpunkt',
+  'eskalationsstufe': 'Stufen',
+  'ausloeser': 'Auslöser',
+  'ressource': 'Material',
+  'erfahrung': 'Erfahrung',
+};
+
+const Map<String, String> kKnowledgeScopeLabels = {
+  'troisdorf': 'Troisdorf',
+  'rhein_sieg': 'Rhein-Sieg-Kreis',
+  'nrw': 'NRW',
+  'bund': 'Bund',
+};

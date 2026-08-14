@@ -134,6 +134,15 @@ async def lifespan(app: FastAPI):
     from app.services.maintenance import run_startup_maintenance
     await run_startup_maintenance()
 
+    # Recherchierten Grundbestand der DRK-Wissensdatenbank einspielen.
+    # Idempotent — eigene, selbst eingepflegte Eintraege bleiben unberuehrt.
+    try:
+        from app.services.knowledge.knowledge_base import seed_knowledge_base
+        await seed_knowledge_base()
+    except Exception as e:
+        logger.error(f"Wissensdatenbank konnte nicht eingespielt werden: {e}",
+                     exc_info=True)
+
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_warnings,
                       args=["warnings", collect_official_warnings], id="warnings", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_weather,

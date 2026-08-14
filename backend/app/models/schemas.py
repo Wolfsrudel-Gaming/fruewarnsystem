@@ -584,3 +584,80 @@ class SituationReportCache(Base):
     context_summary = Column(JSONB, nullable=True)
     generation_seconds = Column(Float, nullable=True)
     generated_at = Column(DateTime, default=func.now(), index=True)
+
+
+class KnowledgeScope(str, enum.Enum):
+    """Geltungsbereich eines Wissenseintrags — von der eigenen Bereitschaft
+    bis zur Bundesebene. Bestimmt, wie stark ein Eintrag die Lagebewertung
+    fuer Troisdorf beeinflusst."""
+    TROISDORF = "troisdorf"
+    RHEIN_SIEG = "rhein_sieg"
+    NRW = "nrw"
+    BUND = "bund"
+
+
+class KnowledgeKind(str, enum.Enum):
+    """Art des Wissens. Steuert, wo ein Eintrag herangezogen wird."""
+    # Was gilt: Gesetze, Konzepte, Bedarfsplaene
+    DOKTRIN = "doktrin"
+    # Wer ist da: Einheiten, Fachdienste, Standorte, Staerken
+    ORGANISATION = "organisation"
+    # Was kann passieren: Gefahrenobjekte, Risikoschwerpunkte
+    GEFAHRENOBJEKT = "gefahrenobjekt"
+    # Ab wann was: MANV-Stufen, Alarmstufen, Schwellen
+    ESKALATIONSSTUFE = "eskalationsstufe"
+    # Woran man es erkennt: Ausloeser, die zu einem Einsatz fuehren
+    AUSLOESER = "ausloeser"
+    # Womit: Fahrzeuge, Material, Kapazitaeten
+    RESSOURCE = "ressource"
+    # Erfahrungswissen aus eigenen Einsaetzen
+    ERFAHRUNG = "erfahrung"
+
+
+class KnowledgeEntry(Base):
+    """Ein Baustein der DRK-Wissensdatenbank.
+
+    Das System bewertet Lagen bisher rein aus Messwerten. Es weiss, dass ein
+    Wert hoch ist — aber nicht, was das fuer Troisdorf bedeutet. Diese Tabelle
+    haelt das Einsatzwissen dahinter: welche Stufen es gibt, welche Einheiten
+    dann laufen, welche Gefahrenobjekte im Gebiet liegen.
+
+    Zwei Herkuenfte werden bewusst getrennt gehalten:
+
+    * ``is_official`` mit Quellenangabe — recherchiert aus oeffentlichen
+      Dokumenten (Rettungsdienstbedarfsplan, Landeskonzepte, Gesetze).
+    * eigene Eintraege ohne Quelle — internes Wissen, das die Nutzer selbst
+      einpflegen. Die AAO des Kreises ist nicht oeffentlich; wer sie kennt,
+      traegt sie hier ein.
+
+    ``categories`` verbindet den Eintrag mit den Risikokategorien des
+    Scorings, ``trigger`` beschreibt maschinenlesbar, ab wann er greift.
+    """
+    __tablename__ = "knowledge_entries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(Enum(KnowledgeKind), nullable=False, index=True)
+    scope = Column(Enum(KnowledgeScope), nullable=False, index=True)
+    title = Column(String(300), nullable=False)
+    body = Column(Text, nullable=False)
+    # Risikokategorien (AlertCategory-Werte), fuer die der Eintrag zaehlt
+    categories = Column(JSONB, default=list)
+    # Freie Schlagworte fuer die Textsuche
+    tags = Column(JSONB, default=list)
+    # Maschinenlesbare Bedingung, z. B. {"category": "weather", "min_score": 70}
+    trigger = Column(JSONB, nullable=True)
+    # Zahlenwerte des Eintrags, z. B. {"patienten_max": 50, "helfer": 78}
+    facts = Column(JSONB, nullable=True)
+    source = Column(String(300), nullable=True)
+    source_url = Column(String(1000), nullable=True)
+    source_date = Column(String(50), nullable=True)
+    is_official = Column(Boolean, default=False)
+    # Eindeutiger Schluessel der Seed-Daten; eigene Eintraege haben keinen.
+    # Verhindert Dubletten beim wiederholten Einspielen.
+    seed_key = Column(String(120), nullable=True, unique=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        Index("ix_knowledge_kind_scope", "kind", "scope"),
+    )

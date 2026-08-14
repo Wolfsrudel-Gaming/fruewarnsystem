@@ -278,6 +278,21 @@ def _generate_fallback_report(context: dict) -> str:
         bar = "█" * int(score / 10) + "░" * (10 - int(score / 10))
         lines.append(f"- {cat}: {bar} {score:.0f}/100 - {data.get('detail', '')}")
 
+    # Die Einsatzerwartung ist der Teil, der die Zahlen erst nutzbar macht —
+    # sie gehört auch dann in den Bericht, wenn kein LLM läuft.
+    deployment = context.get("deployment") or {}
+    if deployment.get("label"):
+        lines.append("")
+        lines.append("## Bedeutung für die Bereitschaft Troisdorf")
+        lines.append(f"**{deployment['label']}** — {deployment.get('description', '')}")
+        for reason in deployment.get("reasons", []):
+            lines.append(f"- {reason}")
+        if deployment.get("components"):
+            lines.append(
+                "- Voraussichtlich gebraucht: "
+                + ", ".join(deployment["components"])
+            )
+
     alerts = context.get("active_alerts", [])
     if alerts:
         lines.append("")
@@ -286,6 +301,13 @@ def _generate_fallback_report(context: dict) -> str:
             lines.append(f"- [{a['category']}] {a['title']} (Score: {a['score']:.0f})")
     else:
         lines.append("\nKeine aktiven Alarme.")
+
+    knowledge = context.get("knowledge") or []
+    if knowledge:
+        lines.append("")
+        lines.append("## Einsatzwissen zur Lage")
+        for k in knowledge[:5]:
+            lines.append(f"- **{k.get('title', '')}** ({k.get('source') or 'intern'})")
 
     news = context.get("relevant_news", [])
     if news:

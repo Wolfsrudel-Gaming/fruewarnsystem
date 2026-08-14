@@ -24,6 +24,9 @@ class AppState extends ChangeNotifier {
   /// Diese Rückmeldungen sind die Lernquelle des Systems.
   List<AlertData> pendingFeedback = [];
 
+  /// Was die aktuelle Lage für die Bereitschaft Troisdorf bedeutet
+  DeploymentAssessment? assessment;
+
   bool loading = true;
   String? error;
   bool wsConnected = false;
@@ -100,6 +103,7 @@ class AppState extends ChangeNotifier {
         api.fetchOfficialWarnings(),
         api.fetchAirQuality(),
         api.fetchPendingFeedback(),
+        api.fetchAssessment(),
       ]);
 
       overview = results[0] as OverviewData?;
@@ -112,6 +116,9 @@ class AppState extends ChangeNotifier {
       officialWarnings = results[7] as List<OfficialWarningData>? ?? [];
       airQuality = results[8] as List<AirQualityReading>? ?? [];
       pendingFeedback = results[9] as List<AlertData>? ?? [];
+      // Fällt der Abruf aus, lieber den letzten Stand behalten als die
+      // Einsatzerwartung verschwinden zu lassen.
+      assessment = results[10] as DeploymentAssessment? ?? assessment;
       error = overview == null ? 'Verbindung fehlgeschlagen' : null;
 
       // Fallback: Kritische Alarme auch ohne WS-Event erkennen (z.B. App

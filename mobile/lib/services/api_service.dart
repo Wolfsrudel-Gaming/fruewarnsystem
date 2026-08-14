@@ -252,6 +252,76 @@ class ApiService {
     return data != null ? SituationReport.fromJson(data) : null;
   }
 
+  // --- Wissensdatenbank und Einsatzerwartung ---
+
+  /// Was folgt aus der aktuellen Lage für die Bereitschaft Troisdorf?
+  Future<DeploymentAssessment?> fetchAssessment() async {
+    final data = await _getJson('/api/dashboard/assessment');
+    return data != null ? DeploymentAssessment.fromJson(data) : null;
+  }
+
+  Future<List<KnowledgeEntryData>> fetchKnowledge({
+    String? kind,
+    String? scope,
+    String? query,
+  }) async {
+    final params = <String>[];
+    if (kind != null) params.add('kind=$kind');
+    if (scope != null) params.add('scope=$scope');
+    if (query != null && query.isNotEmpty) {
+      params.add('query=${Uri.encodeQueryComponent(query)}');
+    }
+    final suffix = params.isEmpty ? '' : '?${params.join('&')}';
+    final data = await _getJson('/api/dashboard/knowledge$suffix');
+    if (data == null) return [];
+    return (data['entries'] as List? ?? [])
+        .map((e) => KnowledgeEntryData.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Eigenes Wissen einpflegen — AAO, interne Einsatzplanung, Erfahrungen
+  Future<bool> addKnowledge({
+    required String kind,
+    required String scope,
+    required String title,
+    required String body,
+    List<String>? categories,
+    List<String>? tags,
+    String? source,
+    String? createdBy,
+  }) async {
+    try {
+      final resp = await http.post(
+        Uri.parse('$baseUrl/api/dashboard/knowledge'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'kind': kind,
+          'scope': scope,
+          'title': title,
+          'body': body,
+          if (categories != null) 'categories': categories,
+          if (tags != null) 'tags': tags,
+          if (source != null) 'source': source,
+          if (createdBy != null) 'created_by': createdBy,
+        }),
+      ).timeout(const Duration(seconds: 15));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> deleteKnowledge(int id) async {
+    try {
+      final resp = await http
+          .delete(Uri.parse('$baseUrl/api/dashboard/knowledge/$id'))
+          .timeout(const Duration(seconds: 10));
+      return resp.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Neuberechnung anstoßen, ohne auf das LLM zu warten
   Future<bool> triggerReportGeneration() async {
     try {

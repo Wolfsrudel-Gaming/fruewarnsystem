@@ -61,8 +61,27 @@ async def _build_context() -> dict:
             .limit(15)
         )).scalars().all()
 
+    # Einsatzwissen zur Lage dazuholen: Was bedeuten diese Werte fuer die
+    # Bereitschaft? Ohne diesen Teil kann das LLM nur die Zahlen nacherzaehlen.
+    from app.api.routes.dashboard import CATEGORY_LABELS
+    from app.services.knowledge.assessment import assess_deployment
+    from app.services.knowledge.knowledge_base import (
+        relevant_for_situation, serialize,
+    )
+
+    deployment = assess_deployment(risk_scores, CATEGORY_LABELS)
+    try:
+        knowledge = [
+            serialize(e) for e in await relevant_for_situation(risk_scores, limit=6)
+        ]
+    except Exception as e:  # Wissensbasis darf den Bericht nie blockieren
+        logger.warning("Wissensabruf fehlgeschlagen: %s", e)
+        knowledge = []
+
     return {
         "risk_scores": risk_scores,
+        "deployment": deployment,
+        "knowledge": knowledge,
         "active_alerts": [
             {"category": a.category.value, "title": a.title, "score": a.score}
             for a in alerts

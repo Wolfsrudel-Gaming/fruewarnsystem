@@ -273,6 +273,35 @@ def _build_report_prompt(context: dict) -> str:
         if isinstance(overall, dict):
             sections.append(f"\nGesamt-Score: {overall.get('score', 0):.0f}/100")
 
+    deployment = context.get("deployment") or {}
+    if deployment.get("label"):
+        sections.append("\n## Einsatzerwartung für die Bereitschaft Troisdorf:")
+        sections.append(
+            f"- Stufe: {deployment['label']} "
+            f"(Kennwert {deployment.get('value', 0):.0f}/100)"
+        )
+        if deployment.get("driver_label"):
+            sections.append(f"- Treibender Anlass: {deployment['driver_label']}")
+        for reason in deployment.get("reasons", []):
+            sections.append(f"- {reason}")
+        if deployment.get("components"):
+            sections.append(
+                "- Voraussichtlich gebrauchte Komponenten: "
+                + ", ".join(deployment["components"])
+            )
+
+    knowledge = context.get("knowledge") or []
+    if knowledge:
+        sections.append(
+            "\n## Einsatzwissen zur Lage "
+            "(belegte Auszüge aus der DRK-Wissensdatenbank — "
+            "nutze diese Angaben, erfinde keine weiteren):"
+        )
+        for k in knowledge:
+            herkunft = k.get("source") or "intern"
+            sections.append(f"\n### {k.get('title', '')}  [{herkunft}]")
+            sections.append(k.get("body", "").strip())
+
     alerts = context.get("active_alerts", [])
     if alerts:
         sections.append("\n## Aktive Alarme:")
@@ -290,8 +319,19 @@ def _build_report_prompt(context: dict) -> str:
     sections.append("\nErstelle einen strukturierten Lagebericht mit:")
     sections.append("1. Zusammenfassung der aktuellen Lage")
     sections.append("2. Identifizierte Risiken und Gefahren")
-    sections.append("3. Empfohlene Maßnahmen für das DRK")
-    sections.append("4. Ausblick auf die nächsten 24 Stunden")
+    sections.append("3. Bedeutung für die Bereitschaft Troisdorf — beziehe dich "
+                    "dabei auf das oben angegebene Einsatzwissen und benenne, "
+                    "welche Fachdienste betroffen wären")
+    sections.append("4. Empfohlene Maßnahmen für das DRK")
+    sections.append("5. Ausblick auf die nächsten 24 Stunden")
+    sections.append(
+        "\nWichtig: Stütze Aussagen über Einheiten, Stärken, Stufen und "
+        "Zeitvorgaben ausschließlich auf das oben angegebene Einsatzwissen. "
+        "Wenn dort nichts steht, sage das, statt zu schätzen. Unterscheide "
+        "klar zwischen der Lage selbst und ihren Folgen für Troisdorf — eine "
+        "schwere Lage in einem anderen Kreis bedeutet nicht automatisch einen "
+        "Einsatz hier."
+    )
 
     return "\n".join(sections)
 

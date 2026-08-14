@@ -10,6 +10,7 @@ import 'warnungen_screen.dart';
 import 'news_screen.dart';
 import 'einsatz_melden_screen.dart';
 import 'lernstatus_screen.dart';
+import 'wissen_screen.dart';
 import 'strom_screen.dart';
 
 class MehrScreen extends StatelessWidget {
@@ -31,6 +32,15 @@ class MehrScreen extends StatelessWidget {
           highlight: true,
           onTap: () => Navigator.push(context, MaterialPageRoute(
             builder: (_) => const EinsatzMeldenScreen(),
+          )),
+        ),
+        _menuItem(
+          context,
+          icon: Icons.menu_book,
+          label: 'Wissensdatenbank',
+          subtitle: 'AAO, Einheiten, Gefahrenschwerpunkte — Grundlage der Bewertung',
+          onTap: () => Navigator.push(context, MaterialPageRoute(
+            builder: (_) => const WissenScreen(),
           )),
         ),
         _menuItem(

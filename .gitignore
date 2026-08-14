@@ -36,3 +36,7 @@ docker-compose.yml.orig
 # Lokale Design-Artefakte (Referenz liegt in docs/design/)
 DRK Troisdorf Fruehwarnsystem.html
 Mobile app design project.zip
+
+# Gebaute APKs — Artefakte, nicht Quellcode
+releases/
+*.apk

@@ -5,6 +5,7 @@ import '../models/categories.dart';
 import '../services/app_state.dart';
 import '../widgets/risk_gauge.dart';
 import '../widgets/category_card.dart';
+import '../widgets/einsatz_karte.dart';
 import 'kategorie_detail_screen.dart';
 import 'warnungen_screen.dart';
 import 'lernstatus_screen.dart';
@@ -90,6 +91,25 @@ class LagebildScreen extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 16),
+
+              // Das Gesamtrisiko beschreibt die Lage, die Einsatzerwartung
+              // ihre Folgen für die eigene Bereitschaft. Beides kann
+              // auseinanderfallen — eine schwere Lage im Nachbarkreis ändert
+              // für Troisdorf oft nichts.
+              if (state.assessment != null) ...[
+                EinsatzKarte(
+                  assessment: state.assessment!,
+                  onTap: () => showModalBottomSheet(
+                    context: context,
+                    backgroundColor: Colors.transparent,
+                    isScrollControlled: true,
+                    builder: (_) => EinsatzDetailSheet(
+                      assessment: state.assessment!,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
 
               if (activeAlerts.isNotEmpty) ...[
                 _banner(

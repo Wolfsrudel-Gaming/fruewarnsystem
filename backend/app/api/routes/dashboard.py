@@ -1221,3 +1221,165 @@ async def run_cleanup(dry_run: bool = Query(False)):
     weather = await collapse_weather_duplicates(dry_run=dry_run)
     alerts = await collapse_alert_duplicates(dry_run=dry_run)
     return {"status": "dry_run" if dry_run else "cleaned", "weather": weather, "alerts": alerts}
+
+
+# --- DRK-Wissensdatenbank ---
+
+class KnowledgeCreate(BaseModel):
+    """Eigener Wissenseintrag.
+
+    Gedacht für alles, was nicht öffentlich recherchierbar ist: die AAO des
+    Kreises, interne Einsatzplanungen, Erfahrungswissen aus zurückliegenden
+    Einsätzen. Solche Einträge stehen gleichberechtigt neben den
+    recherchierten, werden aber als nicht-öffentlich gekennzeichnet.
+    """
+    kind: str = Field(..., description="doktrin|organisation|gefahrenobjekt|"
+                                       "eskalationsstufe|ausloeser|ressource|erfahrung")
+    scope: str = Field("troisdorf", description="troisdorf|rhein_sieg|nrw|bund")
+    title: str
+    body: str
+    categories: Optional[list] = None
+    tags: Optional[list] = None
+    trigger: Optional[dict] = None
+    facts: Optional[dict] = None
+    source: Optional[str] = None
+    source_url: Optional[str] = None
+    source_date: Optional[str] = None
+    created_by: Optional[str] = None
+
+
+@router.get("/knowledge")
+async def list_knowledge(
+    kind: Optional[str] = Query(None),
+    scope: Optional[str] = Query(None),
+    query: Optional[str] = Query(None, description="Volltextsuche"),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+):
+    """Wissensdatenbank durchsehen."""
+    from app.models.schemas import KnowledgeEntry, KnowledgeKind, KnowledgeScope
+    from app.services.knowledge.knowledge_base import _tokens, serialize
+
+    stmt = select(KnowledgeEntry)
+    if kind:
+        try:
+            stmt = stmt.where(KnowledgeEntry.kind == KnowledgeKind(kind))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unbekannte Art: {kind}")
+    if scope:
+        try:
+            stmt = stmt.where(KnowledgeEntry.scope == KnowledgeScope(scope))
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Unbekannter Bereich: {scope}")
+
+    entries = (await db.execute(stmt.order_by(KnowledgeEntry.title))).scalars().all()
+
+    if query:
+        terms = _tokens(query)
+        entries = [
+            e for e in entries
+            if terms & _tokens(f"{e.title} {e.body} {' '.join(e.tags or [])}")
+        ]
+
+    return {
+        "count": len(entries),
+        "entries": [serialize(e) for e in entries[:limit]],
+    }
+
+
+@router.get("/knowledge/relevant")
+async def knowledge_for_current_situation(limit: int = Query(8, ge=1, le=30)):
+    """Die Einträge, die zur aktuellen Lage passen."""
+    from app.services.alert.alert_engine import calculate_risk_scores
+    from app.services.knowledge.knowledge_base import relevant_for_situation, serialize
+
+    scores = await calculate_risk_scores()
+    entries = await relevant_for_situation(scores, limit=limit)
+    return {"count": len(entries), "entries": [serialize(e) for e in entries]}
+
+
+@router.post("/knowledge")
+async def create_knowledge(entry: KnowledgeCreate, db: AsyncSession = Depends(get_db)):
+    """Eigenen Wissenseintrag anlegen."""
+    from app.models.schemas import KnowledgeEntry, KnowledgeKind, KnowledgeScope
+    from app.services.knowledge.knowledge_base import serialize
+
+    try:
+        kind = KnowledgeKind(entry.kind)
+        scope = KnowledgeScope(entry.scope)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    row = KnowledgeEntry(
+        kind=kind,
+        scope=scope,
+        title=entry.title,
+        body=entry.body,
+        categories=entry.categories or [],
+        tags=entry.tags or [],
+        trigger=entry.trigger,
+        facts=entry.facts,
+        source=entry.source,
+        source_url=entry.source_url,
+        source_date=entry.source_date,
+        # Eigene Einträge sind per Definition nicht öffentlich belegt.
+        is_official=False,
+        created_by=entry.created_by,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return {"status": "created", "entry": serialize(row)}
+
+
+@router.delete("/knowledge/{entry_id}")
+async def delete_knowledge(entry_id: int, db: AsyncSession = Depends(get_db)):
+    """Eigenen Eintrag löschen. Recherchierte Einträge sind geschützt —
+    sie kämen beim nächsten Start ohnehin zurück."""
+    from app.models.schemas import KnowledgeEntry
+
+    row = (await db.execute(
+        select(KnowledgeEntry).where(KnowledgeEntry.id == entry_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Eintrag nicht gefunden")
+    if row.seed_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Recherchierter Eintrag kann nicht gelöscht werden",
+        )
+    await db.delete(row)
+    await db.commit()
+    return {"status": "deleted", "id": entry_id}
+
+
+@router.post("/knowledge/reseed")
+async def reseed_knowledge():
+    """Recherchierten Grundbestand neu einspielen (läuft auch beim Start)."""
+    from app.services.knowledge.knowledge_base import seed_knowledge_base
+    return await seed_knowledge_base()
+
+
+@router.get("/assessment")
+async def get_deployment_assessment():
+    """Einsatzerwartung für die Bereitschaft Troisdorf.
+
+    Bewusst getrennt vom Gesamtrisiko: Das Gesamtrisiko beschreibt die Lage,
+    die Einsatzerwartung ihre Folgen für die eigene Einheit. Eine schwere Lage
+    in einem anderen Kreis kann ein hohes Gesamtrisiko und trotzdem eine
+    niedrige Einsatzerwartung ergeben.
+    """
+    from app.services.alert.alert_engine import calculate_risk_scores
+    from app.services.knowledge.assessment import assess_deployment
+    from app.services.knowledge.knowledge_base import relevant_for_situation, serialize
+
+    scores = await calculate_risk_scores()
+    assessment = assess_deployment(scores, CATEGORY_LABELS)
+    try:
+        assessment["knowledge"] = [
+            serialize(e, include_body=False)
+            for e in await relevant_for_situation(scores, limit=5)
+        ]
+    except Exception:
+        assessment["knowledge"] = []
+    return assessment
