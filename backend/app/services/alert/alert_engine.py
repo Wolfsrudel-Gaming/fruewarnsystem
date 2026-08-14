@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, or_
 
 from app.config import settings
 from app.models.database import async_session
@@ -664,11 +664,77 @@ async def _get_climate_30d(session) -> dict:
     return row.parameters if row and row.parameters else {}
 
 
+# Wie weit im Voraus eine noch nicht begonnene Warnung schon zaehlt.
+# Fuer ein Fruehwarnsystem ist genau das der interessante Teil.
+WARNING_LOOKAHEAD = timedelta(hours=24)
+# Rueckfalldauer fuer Warnungen ohne Gueltigkeitsende — ohne die wuerden
+# Altlasten ohne valid_to ewig weiterzaehlen.
+WARNING_MAX_AGE = timedelta(days=3)
+
+
+def is_warning_active(
+    valid_from: Optional[datetime],
+    valid_to: Optional[datetime],
+    created_at: Optional[datetime],
+    now: Optional[datetime] = None,
+) -> bool:
+    """Zaehlt diese Warnung zur aktuellen Lage?
+
+    Drei Bedingungen, alle muessen zutreffen:
+
+    1. Sie laeuft noch — ``valid_to`` liegt in der Zukunft.
+    2. Sie hat begonnen oder beginnt binnen ``WARNING_LOOKAHEAD``. Genau dieser
+       Vorlauf ist der Sinn eines Fruehwarnsystems.
+    3. Fehlt ``valid_to``, greift ersatzweise eine Altersgrenze, damit
+       Datensaetze ohne Ende nicht ewig weiterzaehlen.
+
+    ``active_warning_condition`` bildet dieselbe Logik als SQL-Ausdruck ab;
+    beide muessen zusammen geaendert werden.
+    """
+    now = now or datetime.utcnow()
+    if valid_to is not None:
+        if valid_to < now:
+            return False
+    elif created_at is None or created_at <= now - WARNING_MAX_AGE:
+        return False
+    if valid_from is not None and valid_from > now + WARNING_LOOKAHEAD:
+        return False
+    return True
+
+
+def active_warning_condition(now: Optional[datetime] = None):
+    """SQL-Fassung von :func:`is_warning_active`.
+
+    Frueher wurde ueber ``created_at`` gefiltert, was nur funktionierte, weil der
+    Collector jede Warnung bei jedem Lauf neu einfuegte. Seit dem Upsert bleibt
+    ``created_at`` auf dem Erstkontakt stehen — massgeblich ist jetzt der
+    Gueltigkeitszeitraum der Warnung selbst.
+    """
+    now = now or datetime.utcnow()
+    return and_(
+        WeatherData.data_type == "warning",
+        # laeuft noch (oder hat kein Ende, dann greift die Altersgrenze)
+        or_(
+            WeatherData.valid_to.is_(None),
+            WeatherData.valid_to >= now,
+        ),
+        # hat begonnen oder beginnt in Kuerze
+        or_(
+            WeatherData.valid_from.is_(None),
+            WeatherData.valid_from <= now + WARNING_LOOKAHEAD,
+        ),
+        # Sicherheitsnetz gegen Datensaetze ohne valid_to
+        or_(
+            WeatherData.valid_to.isnot(None),
+            WeatherData.created_at > now - WARNING_MAX_AGE,
+        ),
+    )
+
+
 async def _calc_weather_score(session) -> dict:
-    cutoff = datetime.utcnow() - timedelta(hours=6)
     stmt = (
         select(WeatherData)
-        .where(and_(WeatherData.data_type == "warning", WeatherData.created_at > cutoff))
+        .where(active_warning_condition())
         .order_by(WeatherData.severity.desc())
     )
     result = await session.execute(stmt)

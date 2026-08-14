@@ -215,19 +215,28 @@ async def get_weather(
     hours: int = Query(24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.services.alert.alert_engine import active_warning_condition
+
     cutoff = datetime.utcnow() - timedelta(hours=hours)
-    stmt = (
+    # Warnungen werden seit dem Upsert nicht mehr bei jedem Lauf neu
+    # geschrieben — fuer sie zaehlt der Gueltigkeitszeitraum, nicht das
+    # Anlagedatum. Prognose und Radar bleiben zeitbasiert.
+    warn_rows = (await db.execute(
         select(WeatherData)
+        .where(active_warning_condition())
+        .order_by(desc(WeatherData.severity))
+    )).scalars().all()
+    other_rows = (await db.execute(
+        select(WeatherData)
+        .where(WeatherData.data_type != "warning")
         .where(WeatherData.created_at > cutoff)
         .order_by(desc(WeatherData.created_at))
-    )
-    result = await db.execute(stmt)
-    data = result.scalars().all()
+    )).scalars().all()
 
     warnings = []
     forecasts = []
     radar = []
-    for d in data:
+    for d in list(warn_rows) + list(other_rows):
         item = {
             "id": d.id,
             "type": d.data_type,
@@ -878,7 +887,13 @@ async def get_alerts_pending_feedback(
         .order_by(desc(Alert.triggered_at))
     )).scalars().all()
 
-    pending = [a for a in alerts if a.id not in answered]
+    # Wiederholungen derselben Lage (siehe services/maintenance.py) fragen nicht
+    # noch einmal nach — beantwortet wird die Episode, nicht jeder Auslöser.
+    def _superseded(a: Alert) -> bool:
+        cfg = a.threshold_config if isinstance(a.threshold_config, dict) else {}
+        return bool(cfg.get("_superseded"))
+
+    pending = [a for a in alerts if a.id not in answered and not _superseded(a)]
 
     return {
         "count": len(pending),
@@ -1187,3 +1202,22 @@ async def get_power_outages(
         },
         "source": "Störungsauskunft der Verteilnetzbetreiber",
     }
+
+
+@router.post("/maintenance/cleanup")
+async def run_cleanup(dry_run: bool = Query(False)):
+    """Duplikate zusammenfassen: mehrfach angelegte Wetterwarnungen und
+    wiederholt ausgelöste Alarme derselben Lage.
+
+    Läuft ohnehin beim Serverstart. Der Endpunkt ist für den Fall gedacht, dass
+    nach einem Datenimport oder einer längeren Laufzeit noch einmal aufgeräumt
+    werden soll. Mit ``dry_run=true`` wird nur gezählt, nichts geändert.
+    """
+    from app.services.maintenance import (
+        collapse_alert_duplicates,
+        collapse_weather_duplicates,
+    )
+
+    weather = await collapse_weather_duplicates(dry_run=dry_run)
+    alerts = await collapse_alert_duplicates(dry_run=dry_run)
+    return {"status": "dry_run" if dry_run else "cleaned", "weather": weather, "alerts": alerts}

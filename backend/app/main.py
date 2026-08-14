@@ -128,6 +128,12 @@ async def lifespan(app: FastAPI):
     await init_db()
     await seed_default_thresholds()
 
+    # Altbestaende aus zwei behobenen Fehlern zusammenfassen (mehrfach
+    # angelegte DWD-Warnungen, wiederholt ausgeloeste Alarme). Idempotent —
+    # nach dem ersten Lauf ist nichts mehr zu tun.
+    from app.services.maintenance import run_startup_maintenance
+    await run_startup_maintenance()
+
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_warnings,
                       args=["warnings", collect_official_warnings], id="warnings", replace_existing=True)
     scheduler.add_job(run_collector, "interval", seconds=settings.interval_weather,
