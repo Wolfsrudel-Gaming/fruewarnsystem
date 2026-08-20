@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart' show IconData, Icons;
+
 class OverviewData {
   final double overallScore;
   final Map<String, CategoryScore> riskScores;
@@ -821,6 +823,9 @@ class DeploymentAssessment {
   /// 'kerngebiet' oder 'nachbarschaft'
   final String? evacuationZone;
 
+  /// Erkannte Konstellationen: Kampfmittel, Verpflegungsbedarf, Kombilage
+  final List<LageSignal> signals;
+
   DeploymentAssessment({
     required this.level,
     required this.label,
@@ -835,6 +840,7 @@ class DeploymentAssessment {
     this.knowledge = const [],
     this.evacuationOrt,
     this.evacuationZone,
+    this.signals = const [],
   });
 
   bool get hasEvacuation => evacuationOrt != null;
@@ -864,6 +870,9 @@ class DeploymentAssessment {
           (json['evacuation'] as Map<String, dynamic>?)?['ort'] as String?,
       evacuationZone:
           (json['evacuation'] as Map<String, dynamic>?)?['zone'] as String?,
+      signals: (json['signals'] as List? ?? [])
+          .map((s) => LageSignal.fromJson(s as Map<String, dynamic>))
+          .toList(),
     );
   }
 }
@@ -969,4 +978,50 @@ const Map<String, String> kKnowledgeScopeLabels = {
   'rhein_sieg': 'Rhein-Sieg-Kreis',
   'nrw': 'NRW',
   'bund': 'Bund',
+};
+
+
+/// Eine erkannte Konstellation, die erfahrungsgemäß zum Einsatz führt.
+///
+/// Anders als ein Messwert beschreibt ein Signal einen Zusammenhang:
+/// Bombenfund im Kerngebiet, lange Lage mit vielen Kräften, Veranstaltung
+/// bei Unwetter. Der Hinweis ist bereits fertig formuliert und kann direkt
+/// angezeigt werden.
+class LageSignal {
+  /// 'kampfmittel' | 'verpflegungsbedarf' | 'kombilage'
+  final String kind;
+  final String hinweis;
+  final String? ort;
+  final String? zone;
+
+  /// Nur bei Verpflegungsbedarf gesetzt
+  final int? kraefte;
+  final int? stunden;
+
+  LageSignal({
+    required this.kind,
+    required this.hinweis,
+    this.ort,
+    this.zone,
+    this.kraefte,
+    this.stunden,
+  });
+
+  factory LageSignal.fromJson(Map<String, dynamic> json) {
+    return LageSignal(
+      kind: json['kind'] as String? ?? '',
+      hinweis: json['hinweis'] as String? ?? '',
+      ort: json['ort'] as String?,
+      zone: json['zone'] as String?,
+      kraefte: json['kraefte'] as int?,
+      stunden: json['stunden'] as int?,
+    );
+  }
+}
+
+/// Symbole der Signalarten
+const Map<String, IconData> kSignalIcons = {
+  'kampfmittel': Icons.dangerous_outlined,
+  'verpflegungsbedarf': Icons.soup_kitchen_outlined,
+  'kombilage': Icons.thunderstorm_outlined,
 };

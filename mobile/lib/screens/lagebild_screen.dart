@@ -59,16 +59,37 @@ class LagebildScreen extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              // Die Einsatzerwartung steht vorn: Sie beantwortet die Frage,
+              // auf die es ankommt — was folgt daraus für die Bereitschaft.
+              // Das Gesamtrisiko beschreibt nur die Lage an sich und kann
+              // hoch sein, ohne dass Troisdorf gezogen wird.
+              if (state.assessment != null) ...[
+                EinsatzKarte(
+                  assessment: state.assessment!,
+                  prominent: true,
+                  onTap: () => showModalBottomSheet(
+                    context: context,
+                    backgroundColor: Colors.transparent,
+                    isScrollControlled: true,
+                    builder: (_) => EinsatzDetailSheet(
+                      assessment: state.assessment!,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
               Center(
                 child: RiskGauge(
                   score: ov?.overallScore ?? 0,
-                  size: MediaQuery.of(context).size.width * 0.55,
+                  size: MediaQuery.of(context).size.width *
+                      (state.assessment != null ? 0.38 : 0.55),
                 ),
               ),
               const SizedBox(height: 8),
               const Center(
                 child: Text(
-                  'Gesamtrisiko',
+                  'Gesamtrisiko der Lage',
                   style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
                 ),
               ),
@@ -91,25 +112,6 @@ class LagebildScreen extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 16),
-
-              // Das Gesamtrisiko beschreibt die Lage, die Einsatzerwartung
-              // ihre Folgen für die eigene Bereitschaft. Beides kann
-              // auseinanderfallen — eine schwere Lage im Nachbarkreis ändert
-              // für Troisdorf oft nichts.
-              if (state.assessment != null) ...[
-                EinsatzKarte(
-                  assessment: state.assessment!,
-                  onTap: () => showModalBottomSheet(
-                    context: context,
-                    backgroundColor: Colors.transparent,
-                    isScrollControlled: true,
-                    builder: (_) => EinsatzDetailSheet(
-                      assessment: state.assessment!,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
 
               if (activeAlerts.isNotEmpty) ...[
                 _banner(

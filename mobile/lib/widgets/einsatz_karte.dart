@@ -27,7 +27,16 @@ class EinsatzKarte extends StatelessWidget {
   final DeploymentAssessment assessment;
   final VoidCallback? onTap;
 
-  const EinsatzKarte({super.key, required this.assessment, this.onTap});
+  /// Große Darstellung für den Kopf des Lagebilds. Die Einsatzerwartung ist
+  /// die Frage, auf die es ankommt — sie steht deshalb vor dem Gesamtrisiko.
+  final bool prominent;
+
+  const EinsatzKarte({
+    super.key,
+    required this.assessment,
+    this.onTap,
+    this.prominent = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +45,7 @@ class EinsatzKarte extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: EdgeInsets.all(prominent ? 18 : 14),
         decoration: BoxDecoration(
           color: stil.color.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(14),
@@ -47,8 +56,8 @@ class EinsatzKarte extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(stil.icon, color: stil.color, size: 22),
-                const SizedBox(width: 10),
+                Icon(stil.icon, color: stil.color, size: prominent ? 30 : 22),
+                SizedBox(width: prominent ? 14 : 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,8 +72,9 @@ class EinsatzKarte extends StatelessWidget {
                         assessment.label,
                         style: TextStyle(
                           color: stil.color,
-                          fontSize: 16,
+                          fontSize: prominent ? 23 : 16,
                           fontWeight: FontWeight.w700,
+                          height: 1.15,
                         ),
                       ),
                     ],
@@ -122,9 +132,39 @@ class EinsatzKarte extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 assessment.description,
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12, height: 1.4),
+                style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: prominent ? 13 : 12,
+                    height: 1.45),
               ),
+            ],
+            // Erkannte Konstellationen — Kampfmittel, Verpflegungsbedarf,
+            // Veranstaltung mit Wetterlage. Sie erklären die Stufe oft besser
+            // als der Zahlenwert.
+            if (assessment.signals.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              ...assessment.signals.take(prominent ? 3 : 1).map(
+                    (sig) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(kSignalIcons[sig.kind] ?? Icons.info_outline,
+                              size: 14, color: stil.color),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              sig.hinweis,
+                              style: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 11.5,
+                                  height: 1.4),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
             ],
             if (assessment.components.isNotEmpty) ...[
               const SizedBox(height: 10),

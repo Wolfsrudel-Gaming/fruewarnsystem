@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../models/api_models.dart';
 import 'api_service.dart';
 import 'websocket_service.dart';
+import 'alarm_policy.dart';
+import 'notification_service.dart';
 
 class AppState extends ChangeNotifier {
   final ApiService api;
@@ -26,6 +28,17 @@ class AppState extends ChangeNotifier {
 
   /// Was die aktuelle Lage für die Bereitschaft Troisdorf bedeutet
   DeploymentAssessment? assessment;
+
+  /// Zuletzt gemeldete Stufe — Grundlage für die Erkennung von Wechseln.
+  /// Ohne diesen Merker würde bei jedem Abruf erneut alarmiert.
+  String? _gemeldeteStufe;
+
+  /// Ruhezeiten des Nutzers
+  RuhezeitEinstellung ruhezeit = const RuhezeitEinstellung();
+
+  /// Fortlaufende ID für Stufenwechsel-Meldungen, damit sich aufeinander
+  /// folgende Meldungen nicht gegenseitig überschreiben.
+  int _meldungsId = 9000;
 
   bool loading = true;
   String? error;
@@ -55,6 +68,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _init() async {
+    ruhezeit = await RuhezeitEinstellung.laden();
     await refreshAll();
     _connectWs();
     _pollTimer = Timer.periodic(const Duration(seconds: 60), (_) => refreshAll());
@@ -78,6 +92,65 @@ class AppState extends ChangeNotifier {
         refreshAll();
       }
     });
+  }
+
+  /// Meldet, wenn sich die Einsatzerwartung verändert hat.
+  ///
+  /// Der eigentliche Alarmfall der App: Nicht ein einzelner Messwert weckt,
+  /// sondern die Frage, ob für die Bereitschaft etwas daraus folgt.
+  Future<void> _meldeStufenwechsel(DeploymentAssessment neu) async {
+    final alt = _gemeldeteStufe;
+    if (alt == neu.level) return;
+
+    final staerke = bewerteStufenwechsel(
+      alteStufe: alt,
+      neueStufe: neu.level,
+      jetzt: DateTime.now(),
+      ruhezeit: ruhezeit,
+    );
+    _gemeldeteStufe = neu.level;
+
+    // Beim ersten Abruf nach dem Start gibt es keinen Vorzustand. Dann nur
+    // wecken, wenn die Lage wirklich ernst ist — sonst schreit die App bei
+    // jedem Neustart los.
+    if (alt == null && staerke != AlarmStaerke.weckruf) return;
+
+    final anlass = neu.reasons.isNotEmpty ? neu.reasons.first : null;
+    final text = stufenwechselText(
+      alteStufe: alt,
+      neueStufe: neu.level,
+      neuesLabel: neu.label,
+      anlass: anlass,
+    );
+
+    _meldungsId++;
+    if (stufenRang(neu.level) < stufenRang(alt)) {
+      await NotificationService.showEntwarnung(
+        id: _meldungsId, title: text.titel, body: text.text);
+    } else {
+      await NotificationService.showStufenwechsel(
+        id: _meldungsId, title: text.titel, body: text.text, staerke: staerke);
+    }
+
+    // Vollbild-Weckruf in der App selbst, wenn sie gerade offen ist
+    if (staerke == AlarmStaerke.weckruf) {
+      pendingAssessmentAlarm = neu;
+    }
+  }
+
+  /// Einsatzerwartung, die einen Vollbild-Alarm ausgelöst hat
+  DeploymentAssessment? pendingAssessmentAlarm;
+
+  void clearAssessmentAlarm() {
+    pendingAssessmentAlarm = null;
+    notifyListeners();
+  }
+
+  /// Ruhezeiten ändern und sofort anwenden
+  Future<void> setRuhezeit(RuhezeitEinstellung neu) async {
+    ruhezeit = neu;
+    await neu.speichern();
+    notifyListeners();
   }
 
   void clearCriticalAlert() {
@@ -118,7 +191,11 @@ class AppState extends ChangeNotifier {
       pendingFeedback = results[9] as List<AlertData>? ?? [];
       // Fällt der Abruf aus, lieber den letzten Stand behalten als die
       // Einsatzerwartung verschwinden zu lassen.
-      assessment = results[10] as DeploymentAssessment? ?? assessment;
+      final neu = results[10] as DeploymentAssessment?;
+      if (neu != null) {
+        assessment = neu;
+        await _meldeStufenwechsel(neu);
+      }
       error = overview == null ? 'Verbindung fehlgeschlagen' : null;
 
       // Fallback: Kritische Alarme auch ohne WS-Event erkennen (z.B. App

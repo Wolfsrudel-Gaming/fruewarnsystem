@@ -6,6 +6,7 @@ import '../services/api_service.dart';
 import '../services/app_state.dart';
 import '../services/background_service.dart';
 import '../services/notification_service.dart';
+import '../services/alarm_policy.dart';
 
 class EinstellungenScreen extends StatefulWidget {
   final ApiService api;
@@ -92,6 +93,10 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
           const SizedBox(height: 8),
           _buildAlarmSection(),
           const SizedBox(height: 24),
+          _sectionTitle('Ruhezeiten'),
+          const SizedBox(height: 8),
+          _buildRuhezeitSection(),
+          const SizedBox(height: 24),
           _sectionTitle('Server-Benachrichtigungskanäle'),
           const SizedBox(height: 8),
           _buildToggleSection(),
@@ -112,6 +117,151 @@ class _EinstellungenScreenState extends State<EinstellungenScreen> {
     return Text(
       text,
       style: const TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.w600),
+    );
+  }
+
+  /// Ruhezeiten: Was nachts noch wecken darf.
+  ///
+  /// Bewusst nicht „nachts stumm": Ein Einsatz kommt auch um drei Uhr. Aber
+  /// eine Vorwarnung um drei Uhr, aus der nichts wird, kostet Schlaf ohne
+  /// Nutzen — deshalb weckt in der Ruhezeit nur die eingestellte Stufe.
+  Widget _buildRuhezeitSection() {
+    final state = context.watch<AppState>();
+    final rz = state.ruhezeit;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          SwitchListTile(
+            value: rz.aktiv,
+            onChanged: (v) => state.setRuhezeit(rz.copyWith(aktiv: v)),
+            activeColor: AppColors.drkRed,
+            title: const Text('Ruhezeit aktiv',
+                style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+            subtitle: Text(
+              rz.aktiv
+                  ? 'Zwischen ${rz.startText} und ${rz.endeText} weckt nur die '
+                      'eingestellte Stufe'
+                  : 'Jede Stufenänderung meldet sich rund um die Uhr',
+              style: const TextStyle(color: AppColors.textMuted, fontSize: 11),
+            ),
+          ),
+          if (rz.aktiv) ...[
+            const Divider(color: AppColors.border, height: 1),
+            _zeitZeile('Beginn', rz.startMinute,
+                (m) => state.setRuhezeit(rz.copyWith(startMinute: m))),
+            const Divider(color: AppColors.border, height: 1),
+            _zeitZeile('Ende', rz.endeMinute,
+                (m) => state.setRuhezeit(rz.copyWith(endeMinute: m))),
+            const Divider(color: AppColors.border, height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('In der Ruhezeit wecken ab',
+                    style: TextStyle(
+                        color: AppColors.textSecondary, fontSize: 13)),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+              child: Column(
+                children: [
+                  _weckStufe(state, rz, 'bereitstellung_moeglich',
+                      'Bereitstellung möglich', 'Weckt früh, auch nachts'),
+                  _weckStufe(state, rz, 'bereitstellung_wahrscheinlich',
+                      'Bereitstellung wahrscheinlich',
+                      'Mittelweg zwischen Vorwarnung und Schlaf'),
+                  _weckStufe(state, rz, 'einsatz_wahrscheinlich',
+                      'Einsatz wahrscheinlich',
+                      'Nur der eigentliche Alarmfall'),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _zeitZeile(String label, int minuten, ValueChanged<int> onChanged) {
+    return ListTile(
+      title: Text(label,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 14)),
+      trailing: Text(
+        RuhezeitEinstellung(startMinute: minuten).startText,
+        style: const TextStyle(
+            color: AppColors.drkRedAccent,
+            fontSize: 15,
+            fontFeatures: [FontFeature.tabularFigures()]),
+      ),
+      onTap: () async {
+        final gewaehlt = await showTimePicker(
+          context: context,
+          initialTime: TimeOfDay(hour: minuten ~/ 60, minute: minuten % 60),
+          builder: (ctx, child) => Theme(
+            data: Theme.of(ctx).copyWith(
+              colorScheme: const ColorScheme.dark(
+                primary: AppColors.drkRed,
+                surface: AppColors.surface,
+              ),
+            ),
+            child: child!,
+          ),
+        );
+        if (gewaehlt != null) {
+          onChanged(gewaehlt.hour * 60 + gewaehlt.minute);
+        }
+      },
+    );
+  }
+
+  Widget _weckStufe(AppState state, RuhezeitEinstellung rz, String stufe,
+      String label, String hinweis) {
+    final aktiv = rz.weckStufe == stufe;
+    return GestureDetector(
+      onTap: () => state.setRuhezeit(rz.copyWith(weckStufe: stufe)),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: aktiv
+              ? AppColors.drkRed.withValues(alpha: 0.15)
+              : AppColors.surfaceLight,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: aktiv ? AppColors.drkRed : AppColors.border),
+        ),
+        child: Row(
+          children: [
+            Icon(aktiv ? Icons.radio_button_checked : Icons.radio_button_off,
+                size: 16,
+                color: aktiv ? AppColors.drkRedAccent : AppColors.textMuted),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label,
+                      style: TextStyle(
+                          color: aktiv
+                              ? AppColors.drkRedAccent
+                              : AppColors.textPrimary,
+                          fontSize: 13)),
+                  Text(hinweis,
+                      style: const TextStyle(
+                          color: AppColors.textMuted, fontSize: 10.5)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
