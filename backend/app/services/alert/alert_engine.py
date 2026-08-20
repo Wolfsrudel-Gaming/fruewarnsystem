@@ -1014,18 +1014,32 @@ async def _calc_news_score(session) -> dict:
     news = result.scalars().all()
 
     if not news:
-        return {"score": 0, "weight": 0.6, "detail": "Keine relevanten Nachrichten", "contributions": []}
+        return {"score": 0, "weight": 0.6, "detail": "Keine relevanten Nachrichten",
+                "area_scope": "unbekannt", "contributions": []}
+
+    from app.services.knowledge.geo import SCOPE_ORT, detect_scope
 
     max_relevance = max(n.relevance_score for n in news)
     score = max_relevance * 80
     contributions = []
 
+    # Der Ortsbezug der staerksten Meldung bestimmt den Ortsbezug der
+    # Kategorie. Nicht der haeufigste: Eine einzelne Meldung ueber einen
+    # Grossbrand in Troisdorf wiegt schwerer als fuenf ueber anderswo.
+    leitmeldung = max(news, key=lambda n: n.relevance_score or 0)
+    orts_treffer = detect_scope(leitmeldung.title, leitmeldung.summary or "")
+
     for n in news[:10]:
         ai = n.ai_analysis or {}
         article_points = n.relevance_score * 80
+        ort = detect_scope(n.title, n.summary or "")
+
         reason_parts = []
-        if ai.get("category"):
-            reason_parts.append(f"Kategorie: {ai['category']}")
+        # Der Titel steht bewusst vorn: Er traegt Ortsnamen und Stichworte,
+        # auf die die Einsatzerwartung ihre Evakuierungserkennung stuetzt.
+        reason_parts.append(n.title[:160])
+        if ort["ort"]:
+            reason_parts.append(f"Ort: {ort['ort']}")
         if ai.get("escalation_potential") and ai["escalation_potential"] != "none":
             reason_parts.append(f"Eskalation: {ai['escalation_potential']}")
         if ai.get("drk_relevance"):
@@ -1037,14 +1051,26 @@ async def _calc_news_score(session) -> dict:
             source_type="news_rss",
             value=f"Score {n.relevance_score:.2f}",
             points=article_points,
-            reason="; ".join(reason_parts) if reason_parts else n.title[:100],
+            reason=" · ".join(reason_parts),
             ts=n.published_at or n.created_at,
         ))
+
+    lokale = sum(
+        1 for n in news
+        if detect_scope(n.title, n.summary or "")["scope"] == SCOPE_ORT
+    )
+    detail = f"{len(news)} relevante Nachrichten"
+    if lokale:
+        detail += f", davon {lokale} aus Troisdorf/Siegburg"
 
     return {
         "score": min(100, score),
         "weight": 0.6,
-        "detail": f"{len(news)} relevante Nachrichten",
+        "detail": detail,
+        # Massgeblich fuer den Ortsfaktor der Einsatzerwartung
+        "area_scope": orts_treffer["scope"],
+        "area": orts_treffer["ort"],
+        "local_count": lokale,
         "contributions": contributions,
     }
 

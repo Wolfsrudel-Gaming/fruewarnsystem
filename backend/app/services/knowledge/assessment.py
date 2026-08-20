@@ -33,6 +33,11 @@ pruefbar bleibt.
 
 from typing import Optional
 
+from app.services.knowledge.geo import (
+    KERNGEBIET, NACHBARSCHAFT, SCOPE_AUSSERHALB, SCOPE_KREIS,
+    SCOPE_NACHBARSCHAFT, SCOPE_ORT, detect_scope,
+)
+
 # Wie direkt eine Kategorie auf einen Einsatz der Bereitschaft Troisdorf
 # durchschlaegt. Abgeleitet aus dem Einsatzprofil des Standorts, nicht aus
 # der allgemeinen Schwere der Gefahr.
@@ -89,16 +94,9 @@ ORTSFAKTOR_KREIS = 0.85
 ORTSFAKTOR_NACHBARSCHAFT = 0.92
 ORTSFAKTOR_ORT = 1.0
 
-# Kerngebiet der Einheit. Siegburg zaehlt wie das eigene Stadtgebiet — die
-# Naehe und die eingespielte Zusammenarbeit machen den Unterschied.
-KERNGEBIET = ("troisdorf", "siegburg")
-
-# Direkte Nachbarschaft: relevant, aber eine Stufe unter dem Kerngebiet.
-# Schreibvarianten mitgefuehrt, weil Meldungen sie uneinheitlich schreiben.
-NACHBARSCHAFT = (
-    "niederkassel", "sankt augustin", "st. augustin", "st.augustin",
-    "lohmar", "hennef",
-)
+# KERNGEBIET und NACHBARSCHAFT stammen aus services/knowledge/geo.py —
+# dort werden die Ortslisten gepflegt, damit Nachrichtenbewertung und
+# Einsatzerwartung nie auseinanderlaufen.
 
 # Woran eine Evakuierung im Text zu erkennen ist. Bewusst knapp gehalten:
 # jeder zusaetzliche Begriff erhoeht die Zahl der Fehltreffer.
@@ -115,6 +113,16 @@ EVAKUIERUNG_MINDESTWERT = 82.0
 # aber keine Gewissheit. ANNAHME, nicht aus der Einheit bestaetigt: eine Stufe
 # unter dem Kerngebiet. Bei gegenteiliger Erfahrung anzupassen.
 EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT = 66.0
+
+# Untergrenzen der abgeleiteten Signale (siehe services/knowledge/signals.py).
+# Kampfmittel liegt auf Hoehe der Evakuierung — es ist derselbe Vorgang, nur
+# frueher erkannt. Verpflegungsbedarf und Kombilage heben auf Bereitstellung,
+# nicht auf Einsatz: Sie sagen, dass es eng werden kann, nicht dass es eng ist.
+SIGNAL_MINDESTWERT = {
+    "kampfmittel": 82.0,
+    "verpflegungsbedarf": 68.0,
+    "kombilage": 62.0,
+}
 
 # Wie oft das Land das in Troisdorf stationierte Betreuungsgespann tatsaechlich
 # gezogen hat: zuletzt beim Ahrhochwasser 2021, davor ein- bis zweimal in sehr
@@ -220,22 +228,24 @@ def _ortsfaktor(cat: str, data: dict) -> float:
     """
     if cat in ("official_warning", "news"):
         bereich = (data.get("area_scope") or data.get("scope") or "").lower()
-        if bereich in ("troisdorf", "lokal", "ort"):
+        if bereich in (SCOPE_ORT, "lokal", "ort"):
             return ORTSFAKTOR_ORT
-        if bereich in ("rhein_sieg", "kreis", "region"):
-            return ORTSFAKTOR_KREIS
-        if bereich in ("ausserhalb", "extern", "bundesweit"):
-            return ORTSFAKTOR_AUSSERHALB
-        # Ohne ausdrueckliche Angabe im Text nach Ortsnamen suchen. Eine
-        # Meldung ueber Troisdorf oder Siegburg wiegt deutlich schwerer als
-        # eine ueber irgendwo.
-        text = _lagetext(data)
-        if any(o in text for o in KERNGEBIET):
-            return ORTSFAKTOR_ORT
-        if any(o in text for o in NACHBARSCHAFT):
+        if bereich in (SCOPE_NACHBARSCHAFT, "nachbar"):
             return ORTSFAKTOR_NACHBARSCHAFT
-        # Sonst konservativ auf Kreisebene: nicht ignorieren, aber auch nicht
-        # wie eine Lage vor der Haustuer behandeln.
+        if bereich in (SCOPE_KREIS, "kreis", "region"):
+            return ORTSFAKTOR_KREIS
+        if bereich in (SCOPE_AUSSERHALB, "extern", "bundesweit"):
+            return ORTSFAKTOR_AUSSERHALB
+        # Ohne ausdrueckliche Angabe den Text selbst auswerten.
+        erkannt = detect_scope(_lagetext(data))["scope"]
+        if erkannt == SCOPE_ORT:
+            return ORTSFAKTOR_ORT
+        if erkannt == SCOPE_NACHBARSCHAFT:
+            return ORTSFAKTOR_NACHBARSCHAFT
+        if erkannt == SCOPE_AUSSERHALB:
+            return ORTSFAKTOR_AUSSERHALB
+        # Bleibt der Ort unklar, konservativ auf Kreisebene: nicht ignorieren,
+        # aber auch nicht wie eine Lage vor der Haustuer behandeln.
         return ORTSFAKTOR_KREIS
     if cat == "power":
         bedingung = (data.get("primary_condition") or "").lower()
@@ -282,7 +292,8 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> 
             "level": key, "label": label, "description": beschreibung,
             "value": 0.0, "driver": None, "driver_label": None,
             "driver_score": 0.0, "contributing": [], "components": [],
-            "reasons": [], "evacuation": None, "lead_time": VORLAUF,
+            "reasons": [], "evacuation": None, "signals": [],
+            "lead_time": VORLAUF,
         }
 
     driver = max(gewichtet, key=lambda c: gewichtet[c])
@@ -346,12 +357,26 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> 
     if _ortsfaktor(driver, scores.get(driver) or {}) <= ORTSFAKTOR_AUSSERHALB:
         reasons.append(LANDESALARMIERUNG_HINWEIS)
 
+    # Abgeleitete Signale: Konstellationen, die erfahrungsgemaess zum Einsatz
+    # fuehren, ohne dass ein einzelner Score dafuer hoch genug waere.
+    from app.services.knowledge.signals import alle_signale
+    signale = alle_signale(scores)
+    for signal in signale:
+        untergrenze = SIGNAL_MINDESTWERT.get(signal["kind"])
+        if untergrenze:
+            wert = max(wert, untergrenze)
+        reasons.insert(0, signal["hinweis"])
+
     key, label, beschreibung = _stufe_fuer(wert)
 
     komponenten = []
     quellen = [driver] + nebenlagen
-    if evakuierung:
+    if evakuierung or any(s["kind"] == "kampfmittel" for s in signale):
         komponenten.extend(KOMPONENTEN_EVAKUIERUNG)
+    if any(s["kind"] == "verpflegungsbedarf" for s in signale):
+        for komp in ("Verpflegung (Kuechenanhaenger/Feldkueche)",):
+            if komp not in komponenten:
+                komponenten.insert(0, komp)
     for cat in quellen:
         for komp in KOMPONENTEN.get(cat, []):
             if komp not in komponenten:
@@ -369,5 +394,6 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> 
         "components": komponenten,
         "reasons": reasons,
         "evacuation": evakuierung,
+        "signals": signale,
         "lead_time": VORLAUF,
     }

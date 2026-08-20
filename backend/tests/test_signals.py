@@ -1,0 +1,234 @@
+"""Tests der abgeleiteten Signale und der Ortserkennung.
+
+Die Ortserkennung ist die kritischste Stelle des ganzen Systems geworden:
+Nachrichten wiegen seit der Profilkorrektur voll, und ob eine Meldung
+Troisdorf oder Dueren meint, entscheidet ueber Alarm oder Ruhe. Ein Fehler
+hier ist teurer als ein Fehler in jeder Kennzahl.
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.services.knowledge.geo import (
+    SCOPE_AUSSERHALB, SCOPE_KREIS, SCOPE_NACHBARSCHAFT, SCOPE_ORT,
+    SCOPE_UNBEKANNT, detect_scope, is_local,
+)
+from app.services.knowledge.signals import (
+    DAUER_SCHWELLE_STUNDEN, KRAEFTE_SCHWELLE, alle_signale, kampfmittel_signal,
+    kombilage_signal, verpflegungsbedarf_signal,
+)
+
+
+def _news(text, score=50):
+    """Lage mit einer einzelnen Nachrichtenmeldung."""
+    return {"news": {"score": score, "detail": "1 relevante Nachricht",
+                     "contributions": [{"reason": text}]}}
+
+
+# --- Ortserkennung ---
+
+def test_kerngebiet_wird_erkannt():
+    assert detect_scope("Grossbrand in Troisdorf")["scope"] == SCOPE_ORT
+    assert detect_scope("Sperrung in Siegburg")["scope"] == SCOPE_ORT
+
+
+def test_deutsche_ableitungen_treffen():
+    """"Troisdorfer Feuerwehr" ist in Schlagzeilen haeufiger als der blanke
+    Ortsname. Ohne die Endungen bliebe die haeufigste Form unerkannt."""
+    for text in ("Troisdorfer Feuerwehr im Einsatz",
+                 "Der Siegburger Markt", "Duerener Lagerhalle brennt"):
+        assert detect_scope(text)["ort"] is not None, text
+
+
+def test_stadtteile_zaehlen_als_troisdorf():
+    """Eine Meldung ueber Sieglar oder Spich meint Troisdorf."""
+    for teil in ("Sieglar", "Spich", "Oberlar", "Kriegsdorf"):
+        treffer = detect_scope(f"Feuer in {teil}")
+        assert treffer["scope"] == SCOPE_ORT, teil
+        assert "Troisdorf" in treffer["ort"]
+
+
+def test_nachbarschaft_und_kreis_getrennt():
+    assert detect_scope("Unfall in Lohmar")["scope"] == SCOPE_NACHBARSCHAFT
+    assert detect_scope("Unfall in Windeck")["scope"] == SCOPE_KREIS
+
+
+def test_ausserhalb_wird_als_solches_erkannt():
+    """Der Fall Dueren — die Lage ist real, die Zustaendigkeit eine andere."""
+    assert detect_scope("Grossbrand in Dueren")["scope"] == SCOPE_AUSSERHALB
+    assert detect_scope("Chemieguertel Koeln")["scope"] == SCOPE_AUSSERHALB
+
+
+def test_naehere_zustaendigkeit_gewinnt():
+    """Werden zwei Orte genannt, zaehlt der naehere."""
+    assert detect_scope("Kraefte aus Troisdorf helfen in Koeln")["scope"] == SCOPE_ORT
+
+
+def test_keine_falschtreffer_in_laengeren_woertern():
+    """Ohne strenge Wortgrenze vorne wuerde "Abonnement" als Bonn gelesen."""
+    for text in ("Abonnement gekuendigt", "Verbrauch gestiegen",
+                 "Die Buchhaltung meldet"):
+        assert detect_scope(text)["scope"] == SCOPE_UNBEKANNT, text
+
+
+def test_leerer_text_ist_unbekannt():
+    assert detect_scope("")["scope"] == SCOPE_UNBEKANNT
+    assert detect_scope(None)["scope"] == SCOPE_UNBEKANNT
+
+
+def test_is_local_deckt_kerngebiet_und_nachbarschaft():
+    assert is_local("Brand in Troisdorf")
+    assert is_local("Brand in Hennef")
+    assert not is_local("Brand in Windeck")
+    assert not is_local("Brand in Dueren")
+
+
+# --- Kampfmittel ---
+
+def test_bombenfund_im_kerngebiet_wird_erkannt():
+    signal = kampfmittel_signal(_news("Fliegerbombe in Siegburg gefunden"))
+    assert signal is not None
+    assert signal["ort"] == "Siegburg"
+
+
+def test_bombenfund_ausserhalb_loest_nichts_aus():
+    """Ein Bombenfund in Koeln ist Koelner Sache."""
+    assert kampfmittel_signal(_news("Fliegerbombe in Koeln-Kalk gefunden")) is None
+
+
+def test_kampfmittel_ohne_ort_loest_nichts_aus():
+    assert kampfmittel_signal(_news("Fliegerbombe gefunden")) is None
+
+
+def test_kampfmittel_in_der_nachbarschaft_zaehlt_auch():
+    signal = kampfmittel_signal(_news("Blindgaenger in Niederkassel entdeckt"))
+    assert signal is not None
+    assert signal["zone"] == SCOPE_NACHBARSCHAFT
+
+
+def test_verschiedene_schreibweisen_treffen():
+    for text in ("Bombenfund in Troisdorf", "Entschaerfung in Troisdorf",
+                 "Kampfmittel in Troisdorf", "Weltkriegsbombe in Troisdorf"):
+        assert kampfmittel_signal(_news(text)) is not None, text
+
+
+# --- Verpflegungsbedarf ---
+
+def test_grosse_kraeftezahl_loest_verpflegungssignal_aus():
+    signal = verpflegungsbedarf_signal(
+        _news("Brand in Troisdorf: 120 Einsatzkraefte vor Ort"))
+    assert signal is not None
+    assert signal["kraefte"] == 120
+
+
+def test_kleine_kraeftezahl_reicht_nicht():
+    """Unter der Schwelle wird die Kueche erfahrungsgemaess nicht gerufen."""
+    unter = KRAEFTE_SCHWELLE - 20
+    signal = verpflegungsbedarf_signal(
+        _news(f"Kleinbrand in Troisdorf: {unter} Einsatzkraefte vor Ort"))
+    assert signal is None or signal["kraefte"] is None
+
+
+def test_lange_dauer_loest_aus():
+    signal = verpflegungsbedarf_signal(
+        _news("Dauereinsatz der Feuerwehr in Troisdorf"))
+    assert signal is not None
+
+
+def test_stundenangabe_wird_gelesen():
+    signal = verpflegungsbedarf_signal(
+        _news("Loeschen in Siegburg dauert seit 6 Stunden an"))
+    assert signal is not None
+    assert signal["stunden"] == 6
+
+
+def test_kurze_dauer_reicht_nicht():
+    unter = DAUER_SCHWELLE_STUNDEN - 1
+    signal = verpflegungsbedarf_signal(
+        _news(f"Einsatz in Troisdorf nach {unter} Stunden beendet"))
+    assert signal is None or signal["stunden"] is None
+
+
+def test_lange_lage_ausserhalb_zaehlt_nicht():
+    """Ein Grossbrand in Hamburg dauert genauso lange, geht Troisdorf aber
+    nichts an."""
+    assert verpflegungsbedarf_signal(
+        _news("Grossbrand in Hamburg, 200 Einsatzkraefte")) is None
+
+
+def test_hoechste_kraeftezahl_gewinnt():
+    lage = {"news": {"score": 60, "detail": "2 Meldungen", "contributions": [
+        {"reason": "Brand in Troisdorf: 60 Einsatzkraefte"},
+        {"reason": "Brand in Troisdorf: 140 Einsatzkraefte nachgefordert"},
+    ]}}
+    assert verpflegungsbedarf_signal(lage)["kraefte"] == 140
+
+
+def test_ruhige_lage_erzeugt_kein_signal():
+    assert verpflegungsbedarf_signal(_news("Stadtfest in Troisdorf gut besucht")) is None
+
+
+# --- Kombilage ---
+
+def test_veranstaltung_mit_wetterlage():
+    signal = kombilage_signal({"events": {"score": 55}, "weather": {"score": 62}})
+    assert signal is not None
+
+
+def test_veranstaltung_allein_reicht_nicht():
+    assert kombilage_signal({"events": {"score": 80}, "weather": {"score": 10}}) is None
+
+
+def test_wetter_allein_reicht_nicht():
+    assert kombilage_signal({"events": {"score": 5}, "weather": {"score": 90}}) is None
+
+
+def test_fehlende_kategorien_brechen_nicht():
+    assert kombilage_signal({}) is None
+
+
+# --- Zusammenspiel ---
+
+def test_mehrere_signale_werden_gemeldet():
+    lage = _news("Fliegerbombe in Troisdorf, 200 Einsatzkraefte im Dauereinsatz")
+    lage["events"] = {"score": 50}
+    lage["weather"] = {"score": 50}
+    arten = {s["kind"] for s in alle_signale(lage)}
+    assert arten == {"kampfmittel", "verpflegungsbedarf", "kombilage"}
+
+
+def test_kampfmittel_steht_vor_den_anderen():
+    """Wichtigstes zuerst — die Reihenfolge landet so in der Begruendung."""
+    lage = _news("Fliegerbombe in Troisdorf, 200 Einsatzkraefte im Dauereinsatz")
+    assert alle_signale(lage)[0]["kind"] == "kampfmittel"
+
+
+def test_ruhige_lage_erzeugt_keine_signale():
+    assert alle_signale({"news": {"score": 0}, "weather": {"score": 0}}) == []
+
+
+def test_signale_heben_die_einsatzerwartung():
+    from app.services.knowledge.assessment import assess_deployment
+    ohne = assess_deployment(_news("Stadtfest in Troisdorf", score=40), {})
+    mit = assess_deployment(
+        _news("Fliegerbombe in Troisdorf gefunden", score=40), {})
+    assert mit["value"] > ohne["value"]
+    assert mit["level"] == "einsatz_wahrscheinlich"
+
+
+if __name__ == "__main__":
+    import traceback
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"  PASS  {t.__name__}")
+        except Exception:
+            failed += 1
+            print(f"  FAIL  {t.__name__}")
+            traceback.print_exc()
+    print(f"\n{len(tests) - failed}/{len(tests)} Tests bestanden")
+    sys.exit(1 if failed else 0)

@@ -12,7 +12,36 @@ from app.models.schemas import NewsItem
 
 logger = logging.getLogger(__name__)
 
+# Ortsnahe Quellen zuerst — sie sind die wertvollsten. Nach Auskunft der
+# Einheit ist die Presse der zuverlaessigste Vorbote eines Einsatzes: Was
+# Verpflegung braucht, dauert lange und bindet viele Kraefte, und genau
+# darueber wird berichtet.
 RSS_FEEDS = [
+    # --- Kerngebiet: Troisdorf und Siegburg ---
+    {"name": "GA Troisdorf",
+     "url": "https://ga.de/region/sieg-und-rhein/troisdorf/feed.rss"},
+    {"name": "GA Siegburg",
+     "url": "https://ga.de/region/sieg-und-rhein/siegburg/feed.rss"},
+    {"name": "Feuerwehr Troisdorf (Verein)",
+     "url": "https://www.feuerwehr-troisdorf.de/?format=feed&type=rss"},
+
+    # --- Kreis: Blaulicht und Region ---
+    # Kreispolizeibehoerde Rhein-Sieg-Kreis auf presseportal — die einzige
+    # dedizierte Blaulicht-Quelle mit Kreisbezug, die verlaesslich liefert.
+    {"name": "Polizei Rhein-Sieg-Kreis",
+     "url": "https://www.presseportal.de/rss/dienststelle_65853.rss2"},
+    {"name": "GA Region Sieg und Rhein",
+     "url": "https://ga.de/region/sieg-und-rhein/feed.rss"},
+
+    # --- Bundesweit, wird ueber den Ortsbezug gefiltert ---
+    # Nur 15 Eintraege je Abruf, deshalb als Ergaenzung gedacht, nicht als
+    # Hauptquelle. Faengt Feuerwehr-Meldungen ab, die sonst nirgends stehen.
+    {"name": "Presseportal Feuerwehr", "bundesweit": True,
+     "url": "https://www.presseportal.de/rss/feuerwehr.rss2"},
+    {"name": "Presseportal Blaulicht", "bundesweit": True,
+     "url": "https://www.presseportal.de/rss/blaulicht.rss2"},
+
+    # --- Bestand ---
     {"name": "General-Anzeiger Bonn", "url": "https://ga.de/feed.rss"},
     {"name": "Kölner Stadt-Anzeiger", "url": "https://www.ksta.de/feed/index.rss"},
     {"name": "Kölnische Rundschau", "url": "https://www.rundschau-online.de/feed/index.rss"},
@@ -73,7 +102,10 @@ async def collect_news():
                         f"{title}{link}".encode()
                     ).hexdigest()
 
-                    relevance = _calculate_relevance(title, summary)
+                    relevance = _calculate_relevance(
+                        title, summary,
+                        bundesweit=feed_info.get("bundesweit", False),
+                    )
 
                     published = None
                     if hasattr(entry, "published_parsed") and entry.published_parsed:
@@ -219,7 +251,23 @@ async def analyze_news_backlog(batch_size: int = 4, max_age_days: int = 7):
             await session.commit()
 
 
-def _calculate_relevance(title: str, summary: str) -> float:
+# Wie stark der Ortsbezug die Relevanz einer Meldung veraendert.
+# Ohne diese Daempfung wuerden die bundesweiten Blaulicht-Quellen die
+# Nachrichtenlage mit Ereignissen fluten, die Troisdorf nichts angehen —
+# und die Kategorie wiegt seit der Profilkorrektur voll.
+ORTSGEWICHT = {
+    "troisdorf": 1.0,
+    "nachbarschaft": 0.9,
+    "rhein_sieg": 0.75,
+    # Ohne erkennbaren Ort: mittlere Einstufung. Viele regionale Feeds nennen
+    # den Ort nur im Fliesstext, den wir hier nicht immer vorliegen haben.
+    "unbekannt": 0.6,
+    "ausserhalb": 0.35,
+}
+
+
+def _calculate_relevance(title: str, summary: str,
+                         bundesweit: bool = False) -> float:
     text = f"{title} {summary}".lower()
     score = 0.0
 
@@ -235,7 +283,16 @@ def _calculate_relevance(title: str, summary: str) -> float:
         if kw in text:
             score += 0.05
 
-    return min(1.0, score)
+    score = min(1.0, score)
+
+    from app.services.knowledge.geo import detect_scope
+    scope = detect_scope(title, summary)["scope"]
+    if scope == "unbekannt" and bundesweit:
+        # Bundesweite Quellen berichten per Definition ueberall her. Fehlt der
+        # Ortsbezug, ist die Meldung mit hoher Wahrscheinlichkeit nicht von
+        # hier — anders als bei einem Regionalfeed, wo das Gegenteil gilt.
+        scope = "ausserhalb"
+    return round(score * ORTSGEWICHT.get(scope, 0.6), 4)
 
 
 def _detect_category(title: str, summary: str) -> str:
