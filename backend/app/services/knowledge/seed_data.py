@@ -938,5 +938,93 @@ wird eine Schadenslage mit zusaetzlichem Verpflegungs- und Betreuungsbedarf.
     ),
 ]
 
+
+LOCAL_ENTRIES += [
+
+    _local(
+        "eigen.alarmierungsweg", "doktrin", "troisdorf",
+        "Alarmierungsweg des DRK Troisdorf",
+        """
+Zwei Wege fuehren zur Alarmierung:
+
+1. Die KREISLEITSTELLE alarmiert den Fuehrungsdienst, dieser alarmiert intern.
+2. Bei einer KLEINEN OERTLICHEN LAGE ruft die Feuerwehreinheit direkt beim
+   Fuehrungsdienst an; auch dann alarmiert dieser intern.
+
+In beiden Faellen steht der Fuehrungsdienst zwischen Anforderung und Einheit.
+Es gibt keine automatische Durchalarmierung der Helferinnen und Helfer.
+
+WAS DAS FUER DIESES SYSTEM BEDEUTET — eine ehrliche Grenze:
+
+Der zweite Weg ist fuer ein Fruehwarnsystem unsichtbar. Ein Anruf der
+Feuerwehr beim Fuehrungsdienst hinterlaesst keine Datenspur: keine
+NINA-Meldung, keine Pressemeldung, keinen Messwert. Kleine oertliche
+Verpflegungslagen kann dieses System deshalb grundsaetzlich nicht vorhersagen.
+
+Vorhersagbar ist der erste Weg — Lagen, die gross genug sind, um ueber die
+Leitstelle zu laufen, und die damit fast immer auch Spuren in Warnsystemen,
+Messwerten oder der Presse hinterlassen. Genau darauf ist die Bewertung
+ausgerichtet.
+
+Wer das System beurteilt, sollte es an dieser Teilmenge messen, nicht an allen
+Einsaetzen. Ein verpasster Kleineinsatz ist kein Fehler des Systems, sondern
+liegt ausserhalb dessen, was es sehen kann.
+        """,
+        categories=["news", "fire", "official_warning"],
+        tags=["Alarmierung", "Fuehrungsdienst", "Kreisleitstelle", "Feuerwehr",
+              "Grenze", "Vorhersagbarkeit"],
+    ),
+
+    _local(
+        "eigen.ortsstufen", "ausloeser", "troisdorf",
+        "Raeumliche Abstufung der Einsatzrelevanz",
+        """
+Nicht jeder Ort wiegt gleich schwer:
+
+- TROISDORF und SIEGBURG bilden das Kerngebiet. Siegburg ist dabei die
+  wichtigste Nachbarkommune und zaehlt praktisch wie das eigene Stadtgebiet.
+- NIEDERKASSEL, SANKT AUGUSTIN, LOHMAR und HENNEF sind ebenfalls von
+  Bedeutung, aber eine Stufe darunter angeordnet.
+- Der uebrige Rhein-Sieg-Kreis folgt mit deutlichem Abstand.
+- Ausserhalb des Kreises wird es erst ab UEMANV-Groessenordnung relevant.
+
+Diese Reihenfolge gilt fuer die Bewertung von Nachrichten und behoerdlichen
+Warnungen, in denen ein Ort genannt wird.
+        """,
+        categories=["news", "official_warning", "fire", "water"],
+        tags=["Siegburg", "Niederkassel", "Sankt Augustin", "Lohmar", "Hennef",
+              "Kerngebiet", "Nachbarschaft", "Ortsbezug"],
+    ),
+
+    _local(
+        "eigen.landesalarmierung", "erfahrung", "troisdorf",
+        "Landesalarmierung des Betreuungsgespanns — Grundrate",
+        """
+Das in Troisdorf stationierte Betreuungsgespann kann vom Land NRW in den
+Einsatz gebracht werden. Wie oft das tatsaechlich vorkommt:
+
+- zuletzt beim AHRHOCHWASSER 2021
+- davor nur ein- bis zweimal, mit sehr grossen Abstaenden dazwischen
+
+Das ist grob eine Alarmierung pro Jahrzehnt.
+
+Diese Grundrate ist wichtig fuer die Bewertung ueberoertlicher Lagen. Eine
+Grosslage ausserhalb des Kreises ist real und gehoert angezeigt — aber die
+Erwartung, deshalb selbst auszuruecken, waere nach aller Erfahrung falsch.
+Deshalb werden ueberoertliche Lagen stark gedaempft.
+
+Umgekehrt gilt: Wenn eine Lage die Groessenordnung des Ahrhochwassers
+erreicht, ist die Daempfung hinfaellig. Solche Ereignisse erkennt man nicht an
+einem Schwellenwert, sondern daran, dass mehrere Kategorien gleichzeitig
+anschlagen und die Lage ueber Tage anhaelt.
+        """,
+        categories=["water", "official_warning"],
+        tags=["Betreuungsgespann", "Landesalarmierung", "Ahrhochwasser",
+              "Grundrate", "selten", "ueberoertlich"],
+        facts={"letzte_alarmierung": "Ahrhochwasser 2021",
+               "haeufigkeit": "etwa einmal pro Jahrzehnt"},
+    ),
+]
+
 # Alles, was beim Start eingespielt wird
 ALL_ENTRIES = SEED_ENTRIES + LOCAL_ENTRIES

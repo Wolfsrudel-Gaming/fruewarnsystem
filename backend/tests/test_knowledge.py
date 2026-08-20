@@ -293,6 +293,40 @@ def test_umlaute_bleiben_erhalten():
     assert "überflutung" in _tokens("Überflutung der Rheinaue")
 
 
+def test_alarmierungsweg_benennt_beide_wege_und_die_grenze():
+    """Der zweite Weg — Anruf der Feuerwehr beim Fuehrungsdienst — ist fuer ein
+    Fruehwarnsystem unsichtbar. Das muss dokumentiert sein, sonst wird das
+    System an etwas gemessen, das es nicht sehen kann."""
+    body = _entry("eigen.alarmierungsweg")["body"]
+    assert "Fuehrungsdienst" in body
+    assert "KREISLEITSTELLE" in body
+    assert "unsichtbar" in body
+
+
+def test_ortsstufen_sind_im_wissen_hinterlegt():
+    body = _entry("eigen.ortsstufen")["body"]
+    for ort in ("SIEGBURG", "NIEDERKASSEL", "SANKT AUGUSTIN", "LOHMAR"):
+        assert ort in body
+
+
+def test_landesalarmierung_haelt_die_grundrate_fest():
+    facts = _entry("eigen.landesalarmierung")["facts"]
+    assert "Ahrhochwasser" in facts["letzte_alarmierung"]
+    assert "Jahrzehnt" in facts["haeufigkeit"]
+
+
+def test_ortsstufen_im_wissen_und_im_code_stimmen_ueberein():
+    """Sonst behauptet die Wissensdatenbank etwas anderes als die Bewertung."""
+    from app.services.knowledge.assessment import KERNGEBIET, NACHBARSCHAFT
+    body = _entry("eigen.ortsstufen")["body"].lower()
+    for ort in KERNGEBIET:
+        assert ort in body, f"{ort} fehlt im Wissenseintrag"
+    for ort in NACHBARSCHAFT:
+        if "." in ort:
+            continue  # Schreibvariante, im Fliesstext nicht noetig
+        assert ort in body, f"{ort} fehlt im Wissenseintrag"
+
+
 if __name__ == "__main__":
     import traceback
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

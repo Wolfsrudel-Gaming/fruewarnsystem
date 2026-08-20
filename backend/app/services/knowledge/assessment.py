@@ -86,11 +86,19 @@ NEBENLAGE_SCHWELLE = 45.0
 # eigenen Mittel erschoepft hat.
 ORTSFAKTOR_AUSSERHALB = 0.45
 ORTSFAKTOR_KREIS = 0.85
+ORTSFAKTOR_NACHBARSCHAFT = 0.92
 ORTSFAKTOR_ORT = 1.0
 
 # Kerngebiet der Einheit. Siegburg zaehlt wie das eigene Stadtgebiet — die
 # Naehe und die eingespielte Zusammenarbeit machen den Unterschied.
 KERNGEBIET = ("troisdorf", "siegburg")
+
+# Direkte Nachbarschaft: relevant, aber eine Stufe unter dem Kerngebiet.
+# Schreibvarianten mitgefuehrt, weil Meldungen sie uneinheitlich schreiben.
+NACHBARSCHAFT = (
+    "niederkassel", "sankt augustin", "st. augustin", "st.augustin",
+    "lohmar", "hennef",
+)
 
 # Woran eine Evakuierung im Text zu erkennen ist. Bewusst knapp gehalten:
 # jeder zusaetzliche Begriff erhoeht die Zahl der Fehltreffer.
@@ -102,6 +110,22 @@ EVAKUIERUNGS_BEGRIFFE = (
 # Eine erkannte Evakuierung im Kerngebiet hebt die Bewertung auf mindestens
 # diesen Wert — laut Einsatzerfahrung ist der Einsatz dann nahezu sicher.
 EVAKUIERUNG_MINDESTWERT = 82.0
+
+# In der direkten Nachbarschaft ist eine Evakuierung ein deutlicher Hinweis,
+# aber keine Gewissheit. ANNAHME, nicht aus der Einheit bestaetigt: eine Stufe
+# unter dem Kerngebiet. Bei gegenteiliger Erfahrung anzupassen.
+EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT = 66.0
+
+# Wie oft das Land das in Troisdorf stationierte Betreuungsgespann tatsaechlich
+# gezogen hat: zuletzt beim Ahrhochwasser 2021, davor ein- bis zweimal in sehr
+# grossen Abstaenden. Grob einmal pro Jahrzehnt. Diese Grundrate ist der Grund,
+# warum ueberoertliche Lagen stark gedaempft werden — sie sind real, aber als
+# Alltagserwartung falsch.
+LANDESALARMIERUNG_HINWEIS = (
+    "Eine Landesalarmierung des Betreuungsgespanns kam zuletzt beim "
+    "Ahrhochwasser 2021 vor, davor nur ein- bis zweimal in sehr grossen "
+    "Abstaenden — als Alltagserwartung also praktisch auszuschliessen."
+)
 
 # Welche Komponenten des Standorts bei welcher Kategorie typischerweise
 # gebraucht werden. Verpflegung steht vorn, weil sie den Standort ausmacht.
@@ -156,8 +180,13 @@ def evakuierungshinweis(scores: dict) -> Optional[dict]:
     gerade stehen. Deshalb ein eigener Pfad statt einer Gewichtung.
 
     Verlangt werden BEIDE Hinweise im selben Text: ein Evakuierungsbegriff und
-    ein Ort aus dem Kerngebiet. Ein Bombenfund in Koeln loest damit nichts aus.
+    ein Ort aus dem Kerngebiet oder der direkten Nachbarschaft. Ein Bombenfund
+    in Koeln loest damit nichts aus.
+
+    Das Kerngebiet hat Vorrang: Wird in einem Text sowohl Siegburg als auch
+    Lohmar genannt, zaehlt Siegburg.
     """
+    treffer_nachbarschaft = None
     for cat, data in scores.items():
         if cat == "overall" or not isinstance(data, dict):
             continue
@@ -168,8 +197,18 @@ def evakuierungshinweis(scores: dict) -> Optional[dict]:
             continue
         ort = next((o for o in KERNGEBIET if o in text), None)
         if ort:
-            return {"category": cat, "ort": ort.capitalize()}
-    return None
+            return {"category": cat, "ort": _ortsname(ort), "zone": "kerngebiet"}
+        nachbar = next((o for o in NACHBARSCHAFT if o in text), None)
+        if nachbar and treffer_nachbarschaft is None:
+            treffer_nachbarschaft = {
+                "category": cat, "ort": _ortsname(nachbar), "zone": "nachbarschaft",
+            }
+    return treffer_nachbarschaft
+
+
+def _ortsname(key: str) -> str:
+    """Schreibweise fuer die Anzeige — "sankt augustin" wird zu "Sankt Augustin"."""
+    return " ".join(teil.capitalize() for teil in key.split())
 
 
 def _ortsfaktor(cat: str, data: dict) -> float:
@@ -187,11 +226,14 @@ def _ortsfaktor(cat: str, data: dict) -> float:
             return ORTSFAKTOR_KREIS
         if bereich in ("ausserhalb", "extern", "bundesweit"):
             return ORTSFAKTOR_AUSSERHALB
-        # Ohne ausdrueckliche Angabe im Text nach Ortsnamen suchen. Nachrichten
-        # ueber Troisdorf oder Siegburg wiegen deutlich schwerer als solche
-        # ueber irgendwo.
-        if any(o in _lagetext(data) for o in KERNGEBIET):
+        # Ohne ausdrueckliche Angabe im Text nach Ortsnamen suchen. Eine
+        # Meldung ueber Troisdorf oder Siegburg wiegt deutlich schwerer als
+        # eine ueber irgendwo.
+        text = _lagetext(data)
+        if any(o in text for o in KERNGEBIET):
             return ORTSFAKTOR_ORT
+        if any(o in text for o in NACHBARSCHAFT):
+            return ORTSFAKTOR_NACHBARSCHAFT
         # Sonst konservativ auf Kreisebene: nicht ignorieren, aber auch nicht
         # wie eine Lage vor der Haustuer behandeln.
         return ORTSFAKTOR_KREIS
@@ -281,14 +323,28 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> 
     # Zuschlag, sondern eine Untergrenze — laut Einsatzerfahrung ist der
     # Einsatz dann so gut wie sicher.
     evakuierung = evakuierungshinweis(scores)
-    if evakuierung and wert < EVAKUIERUNG_MINDESTWERT:
-        wert = EVAKUIERUNG_MINDESTWERT
     if evakuierung:
-        reasons.insert(0, (
-            f"Hinweis auf eine Evakuierung in {evakuierung['ort']}. Bei "
-            f"Evakuierungen im Kerngebiet geht Troisdorf erfahrungsgemaess "
-            f"in den Einsatz — Betreuung und Verpflegung der Evakuierten."
-        ))
+        im_kerngebiet = evakuierung.get("zone") == "kerngebiet"
+        mindestwert = (EVAKUIERUNG_MINDESTWERT if im_kerngebiet
+                       else EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT)
+        wert = max(wert, mindestwert)
+        if im_kerngebiet:
+            reasons.insert(0, (
+                f"Hinweis auf eine Evakuierung in {evakuierung['ort']}. Bei "
+                f"Evakuierungen im Kerngebiet geht Troisdorf erfahrungsgemaess "
+                f"in den Einsatz — Betreuung und Verpflegung der Evakuierten."
+            ))
+        else:
+            reasons.insert(0, (
+                f"Hinweis auf eine Evakuierung in {evakuierung['ort']} — "
+                f"direkte Nachbarschaft, eine Stufe unter dem Kerngebiet."
+            ))
+
+    # Bei ueberoertlichen Lagen die Grundrate nennen. Ohne diesen Hinweis liest
+    # sich ein hoher Wert als Alltagserwartung, obwohl die Landesalarmierung
+    # historisch etwa einmal pro Jahrzehnt vorkommt.
+    if _ortsfaktor(driver, scores.get(driver) or {}) <= ORTSFAKTOR_AUSSERHALB:
+        reasons.append(LANDESALARMIERUNG_HINWEIS)
 
     key, label, beschreibung = _stufe_fuer(wert)
 

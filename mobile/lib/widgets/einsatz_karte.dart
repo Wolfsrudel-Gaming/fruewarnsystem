@@ -82,21 +82,33 @@ class EinsatzKarte extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: AppColors.drkRed.withValues(alpha: 0.18),
+                  color: (assessment.isCoreEvacuation
+                          ? AppColors.drkRed
+                          : AppColors.orange)
+                      .withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.groups,
-                        color: AppColors.drkRedAccent, size: 16),
+                    Icon(Icons.groups,
+                        color: assessment.isCoreEvacuation
+                            ? AppColors.drkRedAccent
+                            : AppColors.orangeLight,
+                        size: 16),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Hinweis auf Evakuierung in '
-                        '${assessment.evacuationOrt} — Betreuung und '
-                        'Verpflegung erfahrungsgemäß sicher',
-                        style: const TextStyle(
-                            color: AppColors.drkRedAccent,
+                        assessment.isCoreEvacuation
+                            ? 'Hinweis auf Evakuierung in '
+                                '${assessment.evacuationOrt} — Betreuung und '
+                                'Verpflegung erfahrungsgemäß sicher'
+                            : 'Hinweis auf Evakuierung in '
+                                '${assessment.evacuationOrt} — direkte '
+                                'Nachbarschaft, Einsatz möglich',
+                        style: TextStyle(
+                            color: assessment.isCoreEvacuation
+                                ? AppColors.drkRedAccent
+                                : AppColors.orangeLight,
                             fontSize: 11.5,
                             fontWeight: FontWeight.w500,
                             height: 1.35),

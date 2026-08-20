@@ -18,8 +18,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.knowledge.assessment import (
-    EINSATZBEZUG, NEBENLAGE_SCHWELLE, ORTSFAKTOR_AUSSERHALB,
-    assess_deployment, einsatzgewichteter_score,
+    EINSATZBEZUG, EVAKUIERUNG_MINDESTWERT,
+    EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT, NEBENLAGE_SCHWELLE,
+    ORTSFAKTOR_AUSSERHALB, ORTSFAKTOR_KREIS, ORTSFAKTOR_NACHBARSCHAFT,
+    ORTSFAKTOR_ORT, assess_deployment, einsatzgewichteter_score,
 )
 
 LABELS = {
@@ -339,6 +341,84 @@ def test_begruendung_erklaert_das_standortprofil():
     """Wer die Zahl sieht, soll auch verstehen, warum sie gedaempft ist."""
     result = assess_deployment(_scores(manv=80), LABELS)
     assert any("Rettungsdienststandort" in r for r in result["reasons"])
+
+
+# --- Raeumliche Abstufung ---
+
+def test_siegburg_zaehlt_wie_das_eigene_stadtgebiet():
+    """Siegburg ist die wichtigste Nachbarkommune."""
+    troisdorf = assess_deployment(_scores(
+        news={"score": 80, "detail": "Grossbrand in Troisdorf"}), LABELS)
+    siegburg = assess_deployment(_scores(
+        news={"score": 80, "detail": "Grossbrand in Siegburg"}), LABELS)
+    assert siegburg["value"] == troisdorf["value"]
+
+
+def test_nachbargemeinden_liegen_knapp_unter_dem_kerngebiet():
+    """Niederkassel, Sankt Augustin, Lohmar, Hennef: relevant, aber darunter."""
+    kern = assess_deployment(_scores(
+        news={"score": 80, "detail": "Lage in Siegburg"}), LABELS)
+    nachbar = assess_deployment(_scores(
+        news={"score": 80, "detail": "Lage in Lohmar"}), LABELS)
+    kreis = assess_deployment(_scores(
+        news={"score": 80, "detail": "Lage in Windeck"}), LABELS)
+    assert kreis["value"] < nachbar["value"] < kern["value"]
+
+
+def test_ortsstufen_sind_absteigend_geordnet():
+    assert (ORTSFAKTOR_ORT > ORTSFAKTOR_NACHBARSCHAFT > ORTSFAKTOR_KREIS
+            > ORTSFAKTOR_AUSSERHALB)
+
+
+def test_sankt_augustin_wird_in_beiden_schreibweisen_erkannt():
+    """Meldungen schreiben den Ort uneinheitlich."""
+    lang = assess_deployment(_scores(
+        news={"score": 80, "detail": "Lage in Sankt Augustin"}), LABELS)
+    kurz = assess_deployment(_scores(
+        news={"score": 80, "detail": "Lage in St. Augustin"}), LABELS)
+    unbekannt = assess_deployment(_scores(
+        news={"score": 80, "detail": "Lage in Windeck"}), LABELS)
+    assert lang["value"] == kurz["value"] > unbekannt["value"]
+
+
+def test_kerngebiet_hat_vorrang_vor_der_nachbarschaft():
+    """Nennt ein Text beide, zaehlt das Kerngebiet."""
+    result = assess_deployment(_scores(
+        news={"score": 40,
+              "detail": "Evakuierung in Siegburg und Lohmar"}), LABELS)
+    assert result["evacuation"]["zone"] == "kerngebiet"
+    assert result["evacuation"]["ort"] == "Siegburg"
+
+
+def test_evakuierung_in_der_nachbarschaft_wiegt_weniger():
+    """Annahme: eine Stufe unter dem Kerngebiet, nicht aus der Einheit belegt."""
+    kern = assess_deployment(_scores(
+        news={"score": 20, "detail": "Evakuierung in Troisdorf"}), LABELS)
+    nachbar = assess_deployment(_scores(
+        news={"score": 20, "detail": "Evakuierung in Niederkassel"}), LABELS)
+    assert kern["value"] == EVAKUIERUNG_MINDESTWERT
+    assert nachbar["value"] == EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT
+    assert nachbar["evacuation"]["zone"] == "nachbarschaft"
+
+
+# --- Grundrate der Landesalarmierung ---
+
+def test_ueberoertliche_lage_nennt_die_grundrate():
+    """Ohne den Hinweis liest sich ein hoher Wert als Alltagserwartung.
+
+    Das Betreuungsgespann wurde zuletzt beim Ahrhochwasser 2021 vom Land
+    gezogen, davor ein- bis zweimal in sehr grossen Abstaenden.
+    """
+    result = assess_deployment(_scores(
+        official_warning={"score": 95, "area_scope": "ausserhalb"}), LABELS)
+    assert any("Ahrhochwasser" in r for r in result["reasons"])
+
+
+def test_ortsnahe_lage_nennt_die_grundrate_nicht():
+    """Der Hinweis gehoert nur dorthin, wo er die Erwartung korrigiert."""
+    result = assess_deployment(_scores(
+        water={"score": 85, "detail": "Pegel Troisdorf steigt"}), LABELS)
+    assert not any("Ahrhochwasser" in r for r in result["reasons"])
 
 
 if __name__ == "__main__":

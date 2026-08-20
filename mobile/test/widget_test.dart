@@ -151,12 +151,27 @@ void main() {
       'level': 'einsatz_wahrscheinlich',
       'label': 'Einsatz wahrscheinlich',
       'value': 82.0,
-      'evacuation': {'category': 'news', 'ort': 'Siegburg'},
+      'evacuation': {'category': 'news', 'ort': 'Siegburg',
+                     'zone': 'kerngebiet'},
       'components': ['Betreuungsdienst', 'Verpflegung', 'Betreuungsgespann'],
     });
     expect(a.hasEvacuation, true);
     expect(a.evacuationOrt, 'Siegburg');
+    expect(a.isCoreEvacuation, true);
     expect(a.components, contains('Betreuungsgespann'));
+  });
+
+  test('DeploymentAssessment separates core area from neighbourhood', () {
+    // Lohmar ist relevant, aber eine Stufe unter Troisdorf/Siegburg.
+    final a = DeploymentAssessment.fromJson({
+      'level': 'bereitstellung_wahrscheinlich',
+      'label': 'Bereitstellung wahrscheinlich',
+      'value': 66.0,
+      'evacuation': {'category': 'news', 'ort': 'Lohmar',
+                     'zone': 'nachbarschaft'},
+    });
+    expect(a.hasEvacuation, true);
+    expect(a.isCoreEvacuation, false);
   });
 
   test('KnowledgeEntryData distinguishes researched from own entries', () {
