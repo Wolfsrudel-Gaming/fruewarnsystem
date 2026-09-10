@@ -3,11 +3,47 @@ import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../models/api_models.dart';
 
+/// Vollbild-Weckruf.
+///
+/// Zwei Anlässe führen hierher: ein einzelner kritischer Alarm und — seit dem
+/// Bundesweiten Warntag 2026 — ein Sprung der Einsatzerwartung auf „Einsatz
+/// wahrscheinlich". Der zweite Fall ist der wichtigere: Eine flächendeckende
+/// amtliche Warnung erzeugt keinen einzelnen Alarm, sondern hebt die ganze
+/// Lagebewertung.
 class KritischerAlarmScreen extends StatefulWidget {
-  final AlertData alert;
+  final AlertData? alert;
+  final DeploymentAssessment? assessment;
   final VoidCallback? onAcknowledge;
 
-  const KritischerAlarmScreen({super.key, required this.alert, this.onAcknowledge});
+  const KritischerAlarmScreen({
+    super.key,
+    this.alert,
+    this.assessment,
+    this.onAcknowledge,
+  }) : assert(alert != null || assessment != null,
+            'Entweder ein Alarm oder eine Einsatzerwartung');
+
+  /// Kopfzeile: Score bzw. Kennwert
+  String get _kennwert => alert != null
+      ? 'Score: ${alert!.score.round()}'
+      : 'Einsatzerwartung ${assessment!.value.round()}/100';
+
+  String get _titel => alert?.title ?? assessment!.label;
+
+  String get _text => alert?.description ??
+      (assessment!.reasons.isNotEmpty
+          ? assessment!.reasons.first
+          : assessment!.description);
+
+  String? get _zusatz {
+    if (alert != null) {
+      return alert!.escalationLevel > 0
+          ? 'Eskalationsstufe ${alert!.escalationLevel}'
+          : null;
+    }
+    final komp = assessment!.components;
+    return komp.isEmpty ? null : komp.take(3).join(' · ');
+  }
 
   @override
   State<KritischerAlarmScreen> createState() => _KritischerAlarmScreenState();
@@ -92,26 +128,26 @@ class _KritischerAlarmScreenState extends State<KritischerAlarmScreen>
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
-                    'Score: ${widget.alert.score.round()}',
+                    widget._kennwert,
                     style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
                   ),
                 ),
                 const SizedBox(height: 24),
                 Text(
-                  widget.alert.title,
+                  widget._titel,
                   style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  widget.alert.description,
+                  widget._text,
                   style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 15, height: 1.5),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 16),
-                if (widget.alert.escalationLevel > 0)
+                if (widget._zusatz != null)
                   Text(
-                    'Eskalationsstufe ${widget.alert.escalationLevel}',
+                    widget._zusatz!,
                     style: TextStyle(color: AppColors.orange, fontSize: 14, fontWeight: FontWeight.w500),
                   ),
                 const Spacer(flex: 3),

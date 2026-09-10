@@ -86,11 +86,28 @@ class _MainShellState extends State<MainShell> {
     super.dispose();
   }
 
-  /// Bei kritischem Alarm (Score >= 80) Vollbild-Weckruf anzeigen
+  /// Vollbild-Weckruf anzeigen.
+  ///
+  /// Zwei Auslöser: ein einzelner kritischer Alarm oder ein Sprung der
+  /// Einsatzerwartung auf „Einsatz wahrscheinlich". Der zweite ist der Fall,
+  /// der am Bundesweiten Warntag gefehlt hat — eine flächendeckende amtliche
+  /// Warnung erzeugt keinen einzelnen Alarm, sondern hebt die Gesamtlage.
   void _checkCriticalAlert() {
     final state = _appState;
-    final alert = state?.pendingCriticalAlert;
-    if (state == null || alert == null || !mounted) return;
+    if (state == null || !mounted) return;
+
+    final erwartung = state.pendingAssessmentAlarm;
+    if (erwartung != null) {
+      state.clearAssessmentAlarm();
+      Navigator.of(context).push(MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => KritischerAlarmScreen(assessment: erwartung),
+      ));
+      return;
+    }
+
+    final alert = state.pendingCriticalAlert;
+    if (alert == null) return;
     state.clearCriticalAlert();
     Navigator.of(context).push(MaterialPageRoute(
       fullscreenDialog: true,
