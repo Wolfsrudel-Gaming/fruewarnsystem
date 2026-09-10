@@ -34,7 +34,7 @@ pruefbar bleibt.
 from typing import Optional
 
 from app.services.knowledge.geo import (
-    KERNGEBIET, NACHBARSCHAFT, SCOPE_AUSSERHALB, SCOPE_KREIS,
+    KERNGEBIET, NACHBARSCHAFT, SCOPE_AUSSERHALB, SCOPE_FLAECHIG, SCOPE_KREIS,
     SCOPE_NACHBARSCHAFT, SCOPE_ORT, detect_scope,
 )
 
@@ -52,7 +52,11 @@ EINSATZBEZUG = {
     "fire": 0.85,          # Gefahrenindex als Vorbote von Verpflegungslagen
     "manv": 0.75,          # Troisdorf wirkt mit, stellt aber keinen RD
     "events": 0.7,         # Sanitaetsdienst, auch in Nachbargemeinden
-    "official_warning": 0.6,  # ortsabhaengig, siehe _ortsfaktor
+    # Frueher 0.6. Das war der Versuch, "Warnung fuer woanders" schon im
+    # Gewicht abzufangen — und traf damit auch jede Warnung, die uns wirklich
+    # betrifft. Die Ortsfrage klaert jetzt allein der Ortsfaktor; eine
+    # amtliche Warnung UEBER UNS ist das autoritativste Signal ueberhaupt.
+    "official_warning": 1.0,
     "traffic": 0.55,       # zuerst Rettungsdienst; Verpflegung erst bei Dauer
     "health": 0.5,         # kein Rettungsdienststandort
     "air_quality": 0.4,
@@ -119,6 +123,11 @@ EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT = 66.0
 # frueher erkannt. Verpflegungsbedarf und Kombilage heben auf Bereitstellung,
 # nicht auf Einsatz: Sie sagen, dass es eng werden kann, nicht dass es eng ist.
 SIGNAL_MINDESTWERT = {
+    # Eine amtliche Extremwarnung fuer das ganze Bundesgebiet ist die
+    # deutlichste Lage, die es gibt. Ausserhalb von Probealarmen bedeutet sie
+    # eine reale, grossflaechige Gefahr — da haelt sich das Fruehwarnsystem
+    # nicht mehr zurueck.
+    "flaechenlage": 96.0,
     "kampfmittel": 82.0,
     "verpflegungsbedarf": 68.0,
     "kombilage": 62.0,
@@ -228,7 +237,8 @@ def _ortsfaktor(cat: str, data: dict) -> float:
     """
     if cat in ("official_warning", "news"):
         bereich = (data.get("area_scope") or data.get("scope") or "").lower()
-        if bereich in (SCOPE_ORT, "lokal", "ort"):
+        if bereich in (SCOPE_ORT, SCOPE_FLAECHIG, "lokal", "ort"):
+            # Flaechendeckend heisst "auch hier" — nicht "woanders".
             return ORTSFAKTOR_ORT
         if bereich in (SCOPE_NACHBARSCHAFT, "nachbar"):
             return ORTSFAKTOR_NACHBARSCHAFT
@@ -238,7 +248,7 @@ def _ortsfaktor(cat: str, data: dict) -> float:
             return ORTSFAKTOR_AUSSERHALB
         # Ohne ausdrueckliche Angabe den Text selbst auswerten.
         erkannt = detect_scope(_lagetext(data))["scope"]
-        if erkannt == SCOPE_ORT:
+        if erkannt in (SCOPE_ORT, SCOPE_FLAECHIG):
             return ORTSFAKTOR_ORT
         if erkannt == SCOPE_NACHBARSCHAFT:
             return ORTSFAKTOR_NACHBARSCHAFT

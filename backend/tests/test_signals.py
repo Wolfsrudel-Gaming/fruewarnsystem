@@ -16,8 +16,8 @@ from app.services.knowledge.geo import (
     SCOPE_UNBEKANNT, detect_scope, is_local,
 )
 from app.services.knowledge.signals import (
-    DAUER_SCHWELLE_STUNDEN, KRAEFTE_SCHWELLE, alle_signale, kampfmittel_signal,
-    kombilage_signal, verpflegungsbedarf_signal,
+    DAUER_SCHWELLE_STUNDEN, KRAEFTE_SCHWELLE, alle_signale, flaechenlage_signal,
+    kampfmittel_signal, kombilage_signal, verpflegungsbedarf_signal,
 )
 
 
@@ -216,6 +216,101 @@ def test_signale_heben_die_einsatzerwartung():
         _news("Fliegerbombe in Troisdorf gefunden", score=40), {})
     assert mit["value"] > ohne["value"]
     assert mit["level"] == "einsatz_wahrscheinlich"
+
+
+# --- Flaechenlage: der Bundesweite Warntag ---
+#
+# Gemeldet am 10.09.2026: Waehrend des Warntags stand das Gesamtrisiko auf 100,
+# die Einsatzerwartung aber nur bei "koennte was sein". Ursache war die
+# Ortsdaempfung, die "nicht lokal" und "weniger relevant" gleichsetzte — eine
+# Warnung fuer ganz Deutschland ist aber nicht "woanders", sondern "ueberall,
+# also auch hier".
+
+def _amtliche_warnung(**kw):
+    basis = {
+        "score": 100, "detail": "1 aktive Warnungen",
+        "area_scope": "flaechendeckend", "area": "Deutschland",
+        "covers_us": True, "flaechendeckend": 1, "is_test": False,
+        "max_severity": "Extreme", "max_urgency": "Immediate",
+        "contributions": [],
+    }
+    basis.update(kw)
+    return {"official_warning": basis}
+
+
+def test_bundesweite_extremwarnung_loest_flaechenlage_aus():
+    signal = flaechenlage_signal(_amtliche_warnung())
+    assert signal is not None
+    assert signal["gebiet"] == "Deutschland"
+
+
+def test_flaechenlage_hebt_auf_vollalarm():
+    """Der gemeldete Fall. Vorher blieb die Bewertung bei rund 51."""
+    from app.services.knowledge.assessment import assess_deployment
+    ergebnis = assess_deployment(_amtliche_warnung(), {})
+    assert ergebnis["level"] == "einsatz_wahrscheinlich"
+    assert ergebnis["value"] >= 96
+
+
+def test_probewarnung_alarmiert_genauso_wie_eine_echte_warnung():
+    """GRUNDSATZ: Ein Probealarm wird behandelt wie ein Vollalarm.
+
+    Der Bund sendet den Warntag bewusst mit status "Actual" und msgType
+    "Alert" — damit die ganze Kette geprueft wird. Ein System, das an dieser
+    Stelle unterscheidet, prueft sich selbst nicht und koennte im Ernstfall
+    eine echte Warnung faelschlich fuer eine Uebung halten.
+    """
+    from app.services.knowledge.assessment import assess_deployment
+    echt = assess_deployment(_amtliche_warnung(is_test=False), {})
+    probe = assess_deployment(_amtliche_warnung(is_test=True), {})
+    assert probe["value"] == echt["value"]
+    assert probe["level"] == echt["level"] == "einsatz_wahrscheinlich"
+
+
+def test_probewarnung_wird_im_wortlaut_erwaehnt():
+    """Anzeigen ja, daempfen nein — der Nutzer soll lesen, was drinsteht."""
+    signal = flaechenlage_signal(_amtliche_warnung(is_test=True))
+    assert signal["ist_probewarnung"] is True
+    assert "Probewarnung" in signal["hinweis"]
+    assert "voller Staerke" in signal["hinweis"]
+
+
+def test_warnung_fuer_fremden_kreis_loest_keine_flaechenlage_aus():
+    """Der Fall Dueren bleibt, wie er war."""
+    assert flaechenlage_signal(_amtliche_warnung(
+        area_scope="ausserhalb", area="Kreis Dueren",
+        covers_us=False, flaechendeckend=0)) is None
+
+
+def test_leichte_flaechenwarnung_loest_nicht_aus():
+    """Eine bundesweite Meldung geringer Schwere ist keine Extremlage."""
+    assert flaechenlage_signal(_amtliche_warnung(max_severity="Minor")) is None
+    assert flaechenlage_signal(_amtliche_warnung(max_severity="Moderate")) is None
+
+
+def test_schwere_flaechenwarnung_reicht_bereits():
+    assert flaechenlage_signal(_amtliche_warnung(max_severity="Severe")) is not None
+
+
+def test_flaechenlage_ohne_warnungen_ist_still():
+    assert flaechenlage_signal({}) is None
+    assert flaechenlage_signal({"official_warning": None}) is None
+
+
+def test_flaechenlage_steht_ganz_vorn():
+    """Die deutlichste Lage gehoert in der Begruendung nach oben."""
+    lage = _amtliche_warnung()
+    lage["events"] = {"score": 60}
+    lage["weather"] = {"score": 60}
+    assert alle_signale(lage)[0]["kind"] == "flaechenlage"
+
+
+def test_nrw_weite_warnung_deckt_troisdorf_ebenfalls():
+    """Nicht nur bundesweit — auch eine Landeswarnung gilt hier."""
+    from app.services.knowledge.geo import covers_troisdorf
+    assert covers_troisdorf("Nordrhein-Westfalen")
+    assert covers_troisdorf("Regierungsbezirk Köln")
+    assert not covers_troisdorf("Regierungsbezirk Münster")
 
 
 if __name__ == "__main__":

@@ -24,8 +24,13 @@ import re
 from typing import Optional
 
 from app.services.knowledge.geo import (
-    SCOPE_NACHBARSCHAFT, SCOPE_ORT, detect_scope,
+    SCOPE_FLAECHIG, SCOPE_NACHBARSCHAFT, SCOPE_ORT, detect_scope,
 )
+
+# --- Flaechenlage ------------------------------------------------------------
+# Schweregrade, ab denen eine flaechendeckende amtliche Warnung als
+# Extremlage gilt. CAP kennt minor/moderate/severe/extreme.
+FLAECHENLAGE_SCHWEREGRADE = ("severe", "extreme")
 
 # --- Kampfmittel -------------------------------------------------------------
 
@@ -115,6 +120,67 @@ def kampfmittel_signal(scores: dict) -> Optional[dict]:
                 ),
             }
     return None
+
+
+def flaechenlage_signal(scores: dict) -> Optional[dict]:
+    """Flaechendeckende amtliche Warnung, die Troisdorf einschliesst.
+
+    Der deutlichste Fall, den es gibt. Wenn der Bund oder das Land eine
+    schwere oder extreme Warnung fuer das gesamte Gebiet ausgibt, gilt sie
+    auch hier — sie ist nicht "woanders", sondern "ueberall, also auch bei
+    uns". Ausserhalb von Probealarmen bedeutet eine solche Lage eine reale,
+    grossflaechige Gefahr.
+
+    GRUNDSATZ: Ein Probealarm wird hier NICHT ausgenommen. Er wird behandelt
+    wie ein Vollalarm — das ist der Sinn eines Probealarms, und ein System,
+    das an dieser Stelle unterscheidet, prueft sich selbst nicht.
+    """
+    daten = scores.get("official_warning")
+    if not isinstance(daten, dict):
+        return None
+
+    flaechendeckend = int(daten.get("flaechendeckend") or 0)
+    deckt_uns = bool(daten.get("covers_us"))
+    schwere = str(daten.get("max_severity") or "").lower()
+
+    if not flaechendeckend or not deckt_uns:
+        return None
+    if schwere not in FLAECHENLAGE_SCHWEREGRADE:
+        return None
+
+    gebiet = daten.get("area") or "das gesamte Gebiet"
+    dringlichkeit = str(daten.get("max_urgency") or "").lower()
+    ist_probe = bool(daten.get("is_test"))
+
+    teile = [
+        f"Flaechendeckende amtliche Warnung fuer {gebiet}",
+        f"Schweregrad {schwere}",
+    ]
+    if dringlichkeit == "immediate":
+        teile.append("sofort geltend")
+
+    hinweis = (
+        ", ".join(teile) + ". Diese Warnung schliesst Troisdorf ein. "
+        "Eine Lage dieser Ausdehnung bedeutet eine reale, grossflaechige "
+        "Gefahr — hier wird nicht abgewartet."
+    )
+    if ist_probe:
+        # Nur ein Hinweis auf den Wortlaut. Die Alarmstaerke bleibt gleich.
+        hinweis += (
+            " Der Wortlaut weist sich als Probewarnung aus; der Alarm wird "
+            "trotzdem in voller Staerke ausgeloest, damit die Kette wirklich "
+            "geprueft wird."
+        )
+
+    return {
+        "kind": "flaechenlage",
+        "gebiet": gebiet,
+        "severity": schwere,
+        "urgency": dringlichkeit,
+        "anzahl": flaechendeckend,
+        "ist_probewarnung": ist_probe,
+        "hinweis": hinweis,
+    }
 
 
 def kombilage_signal(scores: dict, schwelle: float = 40.0) -> Optional[dict]:
@@ -208,8 +274,10 @@ def verpflegungsbedarf_signal(scores: dict) -> Optional[dict]:
 def alle_signale(scores: dict) -> list:
     """Alle zutreffenden Signale, wichtigstes zuerst."""
     ergebnis = []
-    for funktion in (kampfmittel_signal, verpflegungsbedarf_signal,
-                     kombilage_signal):
+    # Reihenfolge = Dringlichkeit. Die Flaechenlage steht vorn: Sie ist die
+    # deutlichste Lage und gehoert in der Begruendung nach ganz oben.
+    for funktion in (flaechenlage_signal, kampfmittel_signal,
+                     verpflegungsbedarf_signal, kombilage_signal):
         treffer = funktion(scores)
         if treffer:
             ergebnis.append(treffer)

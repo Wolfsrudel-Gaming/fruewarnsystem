@@ -971,34 +971,143 @@ async def _calc_traffic_score(session) -> dict:
     }
 
 
+# Woran eine Probewarnung im TEXT zu erkennen ist.
+#
+# GRUNDSATZ: Diese Erkennung daempft NIEMALS den Alarm. Ein Probealarm wird
+# behandelt wie ein Vollalarm — das ist der Sinn der Sache.
+#
+# Der Bund sendet den Bundesweiten Warntag bewusst mit status "Actual" und
+# msgType "Alert", also wie eine echte Warnung (geprueft am 10.09.2026 an der
+# laufenden Warnung). Genau deshalb, weil die ganze Alarmkette getestet werden
+# soll. Ein System, das Probealarme leiser behandelt, prueft sich selbst nicht
+# — und koennte im Ernstfall eine echte Warnung faelschlich fuer eine Uebung
+# halten und wegdaempfen.
+#
+# Der Hinweis dient allein der Anzeige: Der Nutzer soll lesen koennen, was in
+# der Warnung steht. Die Alarmstaerke beruehrt er nicht.
+PROBEWARNUNG_BEGRIFFE = (
+    "probewarnung", "probealarm", "warntag", "testwarnung", "probemeldung",
+    "uebungswarnung", "übungswarnung", "dies ist eine übung",
+    "dies ist eine uebung",
+)
+
+# Dringlichkeit gewichtet die Schwere. Eine Extremwarnung, die erst in Tagen
+# eintritt, ist etwas anderes als eine, die jetzt gilt.
+URGENCY_FAKTOR = {
+    "immediate": 1.0,
+    "expected": 0.85,
+    "future": 0.6,
+    "past": 0.3,
+    "unknown": 0.85,
+}
+
+
+def _ist_probewarnung(*texte) -> bool:
+    text = " ".join(str(t or "") for t in texte).lower()
+    return any(w in text for w in PROBEWARNUNG_BEGRIFFE)
+
+
 async def _calc_warning_score(session) -> dict:
+    """Behoerdliche Warnungen bewerten.
+
+    Drei Dinge muessen hier zusammenkommen, die vorher fehlten:
+
+    * Der GELTUNGSBEREICH. Eine Warnung fuer "Deutschland" oder "Nordrhein-
+      Westfalen" schliesst Troisdorf ein — sie ist nicht "woanders", sondern
+      "ueberall, also auch hier". Ohne diese Unterscheidung wurde am
+      Bundesweiten Warntag eine Extremwarnung fuer das gesamte Bundesgebiet
+      wie eine Meldung aus einem fremden Kreis gedaempft.
+    * Die DRINGLICHKEIT. CAP liefert sie mit, sie blieb bisher ungenutzt.
+    * Die PROBEWARNUNG. Sie muss erkennbar sein, damit sie die Lernschleife
+      nicht verfaelscht — alarmiert wird trotzdem, denn genau dafuer ist ein
+      Probealarm da.
+    """
+    from app.services.knowledge.geo import (
+        SCOPE_FLAECHIG, SCOPE_ORT, covers_troisdorf, detect_scope,
+    )
+
     stmt = select(OfficialWarning).where(OfficialWarning.is_active == True)
     result = await session.execute(stmt)
     warnings = result.scalars().all()
 
     if not warnings:
-        return {"score": 0, "weight": 2.0, "detail": "Keine Warnungen", "contributions": []}
+        return {"score": 0, "weight": 2.0, "detail": "Keine Warnungen",
+                "area_scope": "unbekannt", "covers_us": False,
+                "is_test": False, "contributions": []}
 
     severity_map = {"minor": 20, "moderate": 40, "severe": 70, "extreme": 100}
     max_score = 0
     contributions = []
 
+    leit = None          # massgebliche Warnung
+    leit_punkte = -1.0
+    flaechendeckend = 0
+    probe = 0
+
     for w in warnings:
-        s = severity_map.get(w.severity.lower() if w.severity else "", 30)
-        max_score = max(max_score, s)
+        roh = severity_map.get((w.severity or "").lower(), 30)
+        faktor = URGENCY_FAKTOR.get((w.urgency or "unknown").lower(), 0.85)
+        punkte = roh * faktor
+
+        gebiet = f"{w.area_description or ''} {w.headline or ''}"
+        treffer = detect_scope(gebiet)
+        deckt_uns = covers_troisdorf(gebiet)
+        ist_probe = _ist_probewarnung(w.headline, w.description, w.area_description)
+
+        if treffer["scope"] == SCOPE_FLAECHIG:
+            flaechendeckend += 1
+        if ist_probe:
+            probe += 1
+
+        # Massgeblich ist die schwerste Warnung, die uns tatsaechlich betrifft.
+        # Eine Extremwarnung fuer einen fremden Kreis darf die Lage hier nicht
+        # bestimmen — eine fuer ganz Deutschland sehr wohl.
+        #
+        # ist_probe geht hier bewusst NICHT ein: Ein Probealarm zaehlt mit
+        # voller Staerke.
+        gewichtet = punkte * (1.0 if deckt_uns else 0.5)
+        if gewichtet > leit_punkte:
+            leit_punkte = gewichtet
+            leit = {"warnung": w, "scope": treffer["scope"],
+                    "deckt_uns": deckt_uns, "ist_probe": ist_probe}
+
+        max_score = max(max_score, punkte)
+
+        hinweise = [w.headline or "Behördliche Warnung"]
+        if w.area_description:
+            hinweise.append(f"Gebiet: {w.area_description}")
+        if w.urgency:
+            hinweise.append(f"Dringlichkeit: {w.urgency}")
+        if ist_probe:
+            hinweise.append("PROBEWARNUNG")
+
         contributions.append(_contrib(
             source=f"{w.source_system or 'NINA'} - {w.area_description or 'Unbekannt'}",
             source_type="official_warning",
             value=f"Severity: {w.severity}",
-            points=s,
-            reason=w.headline or "Behördliche Warnung",
+            points=punkte,
+            reason=" · ".join(hinweise),
             ts=w.effective,
         ))
 
+    details = [f"{len(warnings)} aktive Warnungen"]
+    if flaechendeckend:
+        details.append(f"{flaechendeckend} flächendeckend")
+    if probe:
+        details.append(f"{probe} Probewarnung{'en' if probe > 1 else ''}")
+
     return {
-        "score": max_score,
+        "score": round(min(100, max_score), 1),
         "weight": 2.0,
-        "detail": f"{len(warnings)} aktive Warnungen",
+        "detail": " · ".join(details),
+        # Der Ortsbezug der massgeblichen Warnung steuert die Einsatzerwartung
+        "area_scope": leit["scope"] if leit else "unbekannt",
+        "area": leit["warnung"].area_description if leit else None,
+        "covers_us": bool(leit and leit["deckt_uns"]),
+        "flaechendeckend": flaechendeckend,
+        "is_test": bool(leit and leit["ist_probe"]),
+        "max_severity": (leit["warnung"].severity if leit else None),
+        "max_urgency": (leit["warnung"].urgency if leit else None),
         "contributions": contributions,
     }
 

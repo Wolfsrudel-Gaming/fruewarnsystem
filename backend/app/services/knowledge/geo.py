@@ -43,9 +43,21 @@ KREIS = (
     "eitorf", "windeck", "much", "siegburg-kaldauen",
 )
 
+# Gebiete, die Troisdorf als Teil einer groesseren Flaeche EINSCHLIESSEN.
+# Das ist etwas anderes als "woanders": Eine Warnung fuer ganz Deutschland
+# oder ganz NRW gilt auch hier. Genau diese Unterscheidung fehlte und liess
+# am Bundesweiten Warntag die Einsatzerwartung bei "koennte was sein" stehen,
+# obwohl eine Extremwarnung fuer das gesamte Bundesgebiet lief.
+FLAECHIG = (
+    "deutschland", "bundesrepublik", "bundesgebiet", "bundesweit",
+    "nordrhein-westfalen", "nordrhein westfalen", "nrw",
+    "regierungsbezirk köln", "regierungsbezirk koeln",
+)
+
 SCOPE_ORT = "troisdorf"
 SCOPE_NACHBARSCHAFT = "nachbarschaft"
 SCOPE_KREIS = "rhein_sieg"
+SCOPE_FLAECHIG = "flaechendeckend"
 SCOPE_AUSSERHALB = "ausserhalb"
 SCOPE_UNBEKANNT = "unbekannt"
 
@@ -91,6 +103,12 @@ def detect_scope(*texte: str) -> dict:
     if not text.strip():
         return {"scope": SCOPE_UNBEKANNT, "ort": None}
 
+    # Flaechenlagen zuerst: Sie schlagen jede engere Zuordnung, weil sie
+    # ohnehin alles darunter einschliessen.
+    treffer = _enthaelt(text, FLAECHIG)
+    if treffer:
+        return {"scope": SCOPE_FLAECHIG, "ort": _schoen(treffer)}
+
     treffer = _enthaelt(text, KERNGEBIET)
     if treffer:
         return {"scope": SCOPE_ORT, "ort": treffer.capitalize()}
@@ -123,3 +141,13 @@ def _schoen(key: str) -> str:
 def is_local(*texte: str) -> bool:
     """Betrifft die Meldung das Kerngebiet oder die direkte Nachbarschaft?"""
     return detect_scope(*texte)["scope"] in (SCOPE_ORT, SCOPE_NACHBARSCHAFT)
+
+
+def covers_troisdorf(*texte: str) -> bool:
+    """Schliesst das genannte Gebiet Troisdorf ein?
+
+    Wahr fuer das Kerngebiet selbst und fuer jede Flaechenlage, die Troisdorf
+    umfasst — Deutschland, NRW, Regierungsbezirk Koeln. Falsch fuer Gebiete,
+    die woanders liegen.
+    """
+    return detect_scope(*texte)["scope"] in (SCOPE_ORT, SCOPE_FLAECHIG)
