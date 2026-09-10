@@ -1007,6 +1007,22 @@ def _ist_probewarnung(*texte) -> bool:
     return any(w in text for w in PROBEWARNUNG_BEGRIFFE)
 
 
+# Eine Entwarnung traegt dieselbe Schwere wie die Warnung, die sie zuruecknimmt
+# — am Warntag 2026 kam sie mit severity "Extreme" und msgType "Cancel". Wer
+# nur die Schwere liest, alarmiert bei der Entwarnung genauso laut.
+#
+# Der Kollektor setzt Entwarnungen bereits auf inaktiv. Diese Pruefung ist die
+# zweite Sicherung: Sollte eine doch als aktiv durchkommen, darf sie die Lage
+# nicht anheben.
+def _ist_entwarnung(w) -> bool:
+    roh = w.raw_data if isinstance(w.raw_data, dict) else {}
+    typ = str(roh.get("_msg_type") or "").strip().lower()
+    if typ in ("cancel", "allclear", "all clear"):
+        return True
+    kopf = (w.headline or "").strip().lower()
+    return kopf.startswith("entwarnung")
+
+
 async def _calc_warning_score(session) -> dict:
     """Behoerdliche Warnungen bewerten.
 
@@ -1043,8 +1059,23 @@ async def _calc_warning_score(session) -> dict:
     leit_punkte = -1.0
     flaechendeckend = 0
     probe = 0
+    aufgehoben = 0
 
     for w in warnings:
+        # Eine Entwarnung hebt die Lage auf, sie treibt sie nicht.
+        if _ist_entwarnung(w):
+            aufgehoben += 1
+            contributions.append(_contrib(
+                source=f"{w.source_system or 'NINA'} - {w.area_description or 'Unbekannt'}",
+                source_type="official_warning_cancel",
+                value="Entwarnung",
+                points=0,
+                reason=(w.headline or "Entwarnung") +
+                       " · hebt eine vorherige Warnung auf, zaehlt nicht zur Lage",
+                ts=w.effective,
+            ))
+            continue
+
         roh = severity_map.get((w.severity or "").lower(), 30)
         faktor = URGENCY_FAKTOR.get((w.urgency or "unknown").lower(), 0.85)
         punkte = roh * faktor
@@ -1090,16 +1121,24 @@ async def _calc_warning_score(session) -> dict:
             ts=w.effective,
         ))
 
-    details = [f"{len(warnings)} aktive Warnungen"]
+    echte = len(warnings) - aufgehoben
+    details = [f"{echte} aktive Warnung{'en' if echte != 1 else ''}"]
     if flaechendeckend:
         details.append(f"{flaechendeckend} flächendeckend")
     if probe:
         details.append(f"{probe} Probewarnung{'en' if probe > 1 else ''}")
+    if aufgehoben:
+        details.append(f"{aufgehoben} Entwarnung{'en' if aufgehoben > 1 else ''}")
+    if echte == 0:
+        details = ["Keine aktive Warnung"]
+        if aufgehoben:
+            details.append(f"{aufgehoben} Entwarnung{'en' if aufgehoben > 1 else ''}")
 
     return {
         "score": round(min(100, max_score), 1),
         "weight": 2.0,
         "detail": " · ".join(details),
+        "cancelled": aufgehoben,
         # Der Ortsbezug der massgeblichen Warnung steuert die Einsatzerwartung
         "area_scope": leit["scope"] if leit else "unbekannt",
         "area": leit["warnung"].area_description if leit else None,
