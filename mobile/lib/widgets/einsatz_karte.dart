@@ -166,6 +166,31 @@ class EinsatzKarte extends StatelessWidget {
                     ),
                   ),
             ],
+            // Sichtbar machen, dass das System gerade härter arbeitet.
+            // Es ist kein Alarm — aber der Nutzer soll wissen, dass eine
+            // Abweichung jetzt schneller auffallen würde.
+            if (assessment.vigilanceRaised) ...[
+              const SizedBox(height: 10),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.radar,
+                      size: 14, color: AppColors.purpleLight),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      prominent && assessment.vigilanceGrund != null
+                          ? assessment.vigilanceGrund!
+                          : 'Erhöhte Wachsamkeit — das System fragt häufiger ab',
+                      style: const TextStyle(
+                          color: AppColors.purpleLight,
+                          fontSize: 11,
+                          height: 1.4),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (assessment.components.isNotEmpty) ...[
               const SizedBox(height: 10),
               Wrap(

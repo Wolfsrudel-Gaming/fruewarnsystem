@@ -826,6 +826,11 @@ class DeploymentAssessment {
   /// Erkannte Konstellationen: Kampfmittel, Verpflegungsbedarf, Kombilage
   final List<LageSignal> signals;
 
+  /// Ist das System gerade hochgefahren? Während einer Großlage in der Nähe
+  /// fragt es häufiger ab und gewichtet schärfer.
+  final bool vigilanceRaised;
+  final String? vigilanceGrund;
+
   DeploymentAssessment({
     required this.level,
     required this.label,
@@ -841,6 +846,8 @@ class DeploymentAssessment {
     this.evacuationOrt,
     this.evacuationZone,
     this.signals = const [],
+    this.vigilanceRaised = false,
+    this.vigilanceGrund,
   });
 
   bool get hasEvacuation => evacuationOrt != null;
@@ -873,6 +880,10 @@ class DeploymentAssessment {
       signals: (json['signals'] as List? ?? [])
           .map((s) => LageSignal.fromJson(s as Map<String, dynamic>))
           .toList(),
+      vigilanceRaised:
+          (json['vigilance'] as Map<String, dynamic>?)?['stufe'] == 'erhoeht',
+      vigilanceGrund:
+          (json['vigilance'] as Map<String, dynamic>?)?['grund'] as String?,
     );
   }
 }

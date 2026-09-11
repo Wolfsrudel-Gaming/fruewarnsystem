@@ -16,8 +16,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.services.knowledge.grosslagen import (
-    AUFFAELLIG_AB_FAKTOR, GROSSLAGEN, aktive_grosslagen,
-    bevorstehende_grosslagen, grundlast_text, ist_auffaellig,
+    ABTASTUNG_ERHOEHT, AUFFAELLIG_AB_FAKTOR, GROSSLAGEN, WACHSAME_ZONEN,
+    WACHSAMKEIT_ERHOEHT, WACHSAMKEIT_NORMAL, aktive_grosslagen,
+    bevorstehende_grosslagen, grundlast_text, ist_auffaellig, ist_wachsam,
+    wachsamkeitsstufe,
 )
 from app.services.knowledge.signals import grosslage_signal
 
@@ -174,6 +176,128 @@ def test_puetzchen_zaehlt_als_nachbarschaft():
     Grenze zu Sankt Augustin — und es faehrt eine Sonderbuslinie direkt aus
     Troisdorf."""
     assert MARKT["zone"] == "nachbarschaft"
+
+
+# --- Wachsamkeit ---
+#
+# Der eigentliche Punkt an einer Grosslage: Sie ist kein Alarmgrund, aber ein
+# Verstaerker. Bei einer Million Menschen auf 80.000 Quadratmetern wird aus
+# einem kleinen Ereignis binnen Minuten eine Lage, die den Grossraum bindet.
+# Das System soll deshalb haeufiger hinsehen, nicht lauter rufen.
+
+def test_wachsamkeit_steigt_waehrend_der_lage():
+    assert wachsamkeitsstufe(date(2026, 9, 11))["stufe"] == WACHSAMKEIT_ERHOEHT
+    assert ist_wachsam(date(2026, 9, 13))
+    assert ist_wachsam(date(2026, 9, 15))
+
+
+def test_wachsamkeit_faellt_danach_zurueck():
+    assert wachsamkeitsstufe(date(2026, 9, 16))["stufe"] == WACHSAMKEIT_NORMAL
+    assert not ist_wachsam(date(2026, 3, 15))
+
+
+def test_wachsamkeit_steigt_nicht_schon_im_vorlauf():
+    """Vorher gibt es nichts zu beobachten, was es sonst nicht auch gaebe."""
+    assert not ist_wachsam(date(2026, 9, 9))
+
+
+def test_wachsamkeit_nennt_einen_grund():
+    grund = wachsamkeitsstufe(date(2026, 9, 11))["grund"]
+    assert "Puetzchens Markt" in grund
+    assert "1.000.000" in grund, "Tausenderpunkte fehlen"
+    assert ", die den gesamten" in grund, "Satzkomma wurde zerstoert"
+
+
+def test_normale_wachsamkeit_hat_keinen_grund_und_keine_abtastung():
+    stufe = wachsamkeitsstufe(date(2026, 3, 15))
+    assert stufe["grund"] is None
+    assert stufe["abtastung"] == {}
+    assert stufe["lagen"] == []
+
+
+def test_nur_nahe_zonen_heben_die_wachsamkeit():
+    """Ein Volksfest in Ostwestfalen aendert hier nichts."""
+    assert "ausserhalb" not in WACHSAME_ZONEN
+    assert set(WACHSAME_ZONEN) <= {"troisdorf", "nachbarschaft", "rhein_sieg"}
+
+
+def test_abtastung_wird_kuerzer_nicht_laenger():
+    """Die verkuerzten Abstaende muessen unter den Regelwerten liegen."""
+    from app.config import settings
+    regel = {
+        "warnings": settings.interval_warnings,
+        "news": settings.interval_news,
+        "feuerwehr_bonn": settings.interval_feuerwehr_bonn,
+        "weather_warnings": settings.interval_weather,
+        "traffic": settings.interval_traffic,
+    }
+    for job, sekunden in ABTASTUNG_ERHOEHT.items():
+        assert sekunden <= regel[job], f"{job} wuerde seltener abfragen"
+
+
+def test_abtastung_bleibt_hoeflich():
+    """Keine Quelle oefter als einmal pro Minute — die Schnittstellen sind
+    fremde Systeme, und ein Fruehwarnsystem darf sie nicht ueberrennen."""
+    assert min(ABTASTUNG_ERHOEHT.values()) >= 60
+
+
+def test_abtastung_trifft_vorhandene_scheduler_jobs():
+    """Ein umbenannter Job wuerde die Anpassung still ins Leere laufen lassen.
+
+    Deshalb wird gegen die tatsaechlichen Job-Kennungen in main.py geprueft,
+    statt sie in zwei Dateien zu pflegen und auf Disziplin zu hoffen.
+    """
+    quelle = (Path(__file__).resolve().parents[1] / "app" / "main.py").read_text()
+    for job in ABTASTUNG_ERHOEHT:
+        assert f'id="{job}"' in quelle, f"Kein Scheduler-Job mit id={job}"
+
+
+def test_nur_schnelle_quellen_werden_verkuerzt():
+    """Strompreise und Pegelstaende aendern sich durch eine Kirmes nicht."""
+    for job in ("grid", "fuel", "shipping", "drought", "icu"):
+        assert job not in ABTASTUNG_ERHOEHT
+
+
+# --- Kontextgewichtung ---
+
+def test_manv_zaehlt_waehrend_der_grosslage_voll():
+    """Ein Massenanfall auf einem Volksfest ist fuer Troisdorf vor allem eine
+    Betreuungslage — Tausende Unverletzte und Getrennte. Genau dafuer ist der
+    Standort da, die uebliche Daempfung trifft hier nicht zu."""
+    from app.services.knowledge.assessment import einsatzbezug_fuer
+    assert einsatzbezug_fuer("manv", wachsam=False) < 1.0
+    assert einsatzbezug_fuer("manv", wachsam=True) == 1.0
+
+
+def test_kontextgewichtung_hebt_die_einsatzerwartung():
+    from app.services.knowledge.assessment import assess_deployment
+    lage = {"manv": {"score": 75}}
+    normal = assess_deployment(lage, {}, tag=date(2026, 3, 15))
+    wachsam = assess_deployment(lage, {}, tag=date(2026, 9, 11))
+    assert wachsam["value"] > normal["value"]
+    assert wachsam["vigilance"]["stufe"] == WACHSAMKEIT_ERHOEHT
+
+
+def test_kontextgewichtung_erklaert_sich():
+    from app.services.knowledge.assessment import assess_deployment
+    ergebnis = assess_deployment({"manv": {"score": 75}}, {"manv": "MANV"},
+                                 tag=date(2026, 9, 11))
+    assert any("Betreuungslage" in g for g in ergebnis["reasons"])
+
+
+def test_kontextgewichtung_aendert_unbeteiligte_kategorien_nicht():
+    """Hochwasser wird durch eine Kirmes nicht gefaehrlicher."""
+    from app.services.knowledge.assessment import einsatzbezug_fuer
+    for cat in ("water", "radiation", "news", "power", "weather"):
+        assert einsatzbezug_fuer(cat, True) == einsatzbezug_fuer(cat, False), cat
+
+
+def test_wachsamkeit_allein_alarmiert_nicht():
+    """Eine laufende Grossveranstaltung ist Normalbetrieb."""
+    from app.services.knowledge.assessment import assess_deployment
+    ergebnis = assess_deployment({"events": {"score": 0}}, {},
+                                 tag=date(2026, 9, 11))
+    assert ergebnis["level"] == "ruhe"
 
 
 if __name__ == "__main__":

@@ -174,6 +174,29 @@ void main() {
     expect(a.isCoreEvacuation, false);
   });
 
+  test('DeploymentAssessment reports raised vigilance', () {
+    // Während einer Großlage arbeitet das System härter, ohne lauter zu sein:
+    // Die Stufe bleibt niedrig, der Hinweis erscheint trotzdem.
+    final a = DeploymentAssessment.fromJson({
+      'level': 'ruhe',
+      'label': 'Ruhe',
+      'value': 0.0,
+      'vigilance': {
+        'stufe': 'erhoeht',
+        'grund': 'Puetzchens Markt laeuft. Bei dieser Groessenordnung ...',
+      },
+    });
+    expect(a.vigilanceRaised, true);
+    expect(a.isActionable, false);
+    expect(a.vigilanceGrund, contains('Puetzchens Markt'));
+  });
+
+  test('DeploymentAssessment defaults to normal vigilance', () {
+    final a = DeploymentAssessment.fromJson({'level': 'ruhe', 'label': 'Ruhe'});
+    expect(a.vigilanceRaised, false);
+    expect(a.vigilanceGrund, isNull);
+  });
+
   test('KnowledgeEntryData distinguishes researched from own entries', () {
     final seed = KnowledgeEntryData.fromJson({
       'id': 1, 'kind': 'doktrin', 'scope': 'rhein_sieg',

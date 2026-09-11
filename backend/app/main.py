@@ -100,6 +100,60 @@ async def refresh_situation_report():
         logger.error(f"Lagebericht fehlgeschlagen: {e}", exc_info=True)
 
 
+# Regelabstaende der Kollektoren, die bei erhoehter Wachsamkeit verkuerzt
+# werden. Nach dem Ende einer Grosslage wird auf diese Werte zurueckgestellt.
+_REGELABSTAND = {}
+
+
+async def wachsamkeit_anpassen():
+    """Abtastrhythmus an laufende Grosslagen anpassen.
+
+    Waehrend einer Grossveranstaltung in erreichbarer Naehe fragt das System
+    haeufiger ab. Nicht, um lauter zu alarmieren — die Veranstaltung selbst
+    ist Normalbetrieb. Sondern um eine Abweichung frueher zu bemerken: Bei
+    einer Million Menschen auf engem Raum entscheidet die Vorlaufzeit.
+
+    Verkuerzt werden nur die Quellen, die bei einer ploetzlichen Lage als
+    Erste etwas zeigen. Strompreise und Pegelstaende aendern sich durch eine
+    Kirmes nicht.
+    """
+    try:
+        from app.services.knowledge.grosslagen import wachsamkeitsstufe
+
+        stufe = wachsamkeitsstufe()
+        gewuenscht = stufe.get("abtastung") or {}
+        geaendert = []
+
+        for job_id, sekunden in gewuenscht.items():
+            job = scheduler.get_job(job_id)
+            if job is None:
+                continue
+            _REGELABSTAND.setdefault(job_id, job.trigger.interval.total_seconds())
+            if job.trigger.interval.total_seconds() != sekunden:
+                job.reschedule(trigger="interval", seconds=sekunden)
+                geaendert.append(f"{job_id}={sekunden}s")
+
+        # Zurueckstellen, was nicht mehr verkuerzt sein soll
+        for job_id, regel in list(_REGELABSTAND.items()):
+            if job_id in gewuenscht:
+                continue
+            job = scheduler.get_job(job_id)
+            if job is None:
+                continue
+            if job.trigger.interval.total_seconds() != regel:
+                job.reschedule(trigger="interval", seconds=int(regel))
+                geaendert.append(f"{job_id}={int(regel)}s (zurueck)")
+
+        if geaendert:
+            logger.info(
+                "Wachsamkeit %s — Abtastung angepasst: %s",
+                stufe["stufe"], ", ".join(geaendert),
+            )
+    except Exception as e:
+        logger.error(f"Wachsamkeit konnte nicht angepasst werden: {e}",
+                     exc_info=True)
+
+
 async def recompute_learning():
     """Kalibrierung aus den Einsatz-Rueckmeldungen fortschreiben."""
     try:
@@ -208,9 +262,16 @@ async def lifespan(app: FastAPI):
                       id="calibration", replace_existing=True)
     scheduler.add_job(refresh_situation_report, "interval", minutes=20,
                       id="situation_report", replace_existing=True)
+    # Wachsamkeit viertelstuendlich pruefen. Eine Grosslage beginnt und endet
+    # zu festen Zeiten — feiner muss die Pruefung nicht sein.
+    scheduler.add_job(wachsamkeit_anpassen, "interval", minutes=15,
+                      id="wachsamkeit", replace_existing=True)
 
     scheduler.start()
     logger.info("Scheduler started with all collectors")
+
+    # Beim Start sofort pruefen, statt eine Viertelstunde zu warten
+    asyncio.create_task(wachsamkeit_anpassen())
 
     asyncio.create_task(run_collector("initial_warnings", collect_official_warnings))
     asyncio.create_task(run_collector("initial_weather", collect_dwd_warnings))

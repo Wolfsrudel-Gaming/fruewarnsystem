@@ -65,6 +65,35 @@ EINSATZBEZUG = {
 }
 DEFAULT_BEZUG = 0.5
 
+# Einsatzbezug waehrend erhoehter Wachsamkeit — also solange eine Grosslage in
+# erreichbarer Naehe laeuft (siehe grosslagen.py).
+#
+# Der Grund ist nicht, dass alles gefaehrlicher waere. Es ist, dass sich die
+# ART der Lage aendert:
+#
+# Ein Massenanfall auf einem Volksfest mit einer Million Besuchern ist fuer
+# Troisdorf KEINE rettungsdienstliche Lage — dafuer ist der Standort nicht da.
+# Er ist eine BETREUUNGS-Grosslage: Tausende Unverletzte, Getrennte,
+# Evakuierte, die versorgt werden muessen. Genau dafuer gibt es den
+# Betreuungsplatz 500 und die Kueche. Die uebliche Daempfung von "manv"
+# ("wir sind kein Rettungsdienststandort") trifft hier also nicht zu.
+#
+# Dasselbe gilt fuer Verkehr (Massenabfluss, blockierte Rettungswege) und
+# Veranstaltungen selbst.
+EINSATZBEZUG_WACHSAM = {
+    "manv": 1.0,       # Betreuungslage, nicht Rettungsdienstlage
+    "events": 0.9,     # die Veranstaltung ist jetzt der Schauplatz
+    "traffic": 0.75,   # Massenabfluss, Sperrungen, Rettungswege
+    "health": 0.65,    # Regelrettungsdienst ist gebunden
+}
+
+
+def einsatzbezug_fuer(cat: str, wachsam: bool = False) -> float:
+    """Einsatzbezug einer Kategorie, ggf. im Kontext einer Grosslage."""
+    if wachsam and cat in EINSATZBEZUG_WACHSAM:
+        return EINSATZBEZUG_WACHSAM[cat]
+    return EINSATZBEZUG.get(cat, DEFAULT_BEZUG)
+
 # Schwellen der Einsatzerwartung, angewandt auf den einsatzgewichteten Score.
 STUFEN = [
     (80.0, "einsatz_wahrscheinlich",
@@ -266,11 +295,11 @@ def _ortsfaktor(cat: str, data: dict) -> float:
     return ORTSFAKTOR_ORT
 
 
-def einsatzgewichteter_score(cat: str, data: dict) -> float:
+def einsatzgewichteter_score(cat: str, data: dict,
+                             wachsam: bool = False) -> float:
     """Score einer Kategorie, uebersetzt in Einsatzrelevanz fuer Troisdorf."""
     score = float(data.get("score", 0) or 0)
-    bezug = EINSATZBEZUG.get(cat, DEFAULT_BEZUG)
-    return score * bezug * _ortsfaktor(cat, data)
+    return score * einsatzbezug_fuer(cat, wachsam) * _ortsfaktor(cat, data)
 
 
 def _stufe_fuer(wert: float) -> tuple:
@@ -290,12 +319,17 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None,
     Einsatzerwartung ihre Folgen fuer die eigene Bereitschaft. Beides kann
     auseinanderfallen — genau das war der Fall Dueren.
     """
+    from app.services.knowledge.grosslagen import wachsamkeitsstufe
+
     labels = kategorie_labels or {}
+    wachsamkeit = wachsamkeitsstufe(tag)
+    wachsam = wachsamkeit["stufe"] != "normal"
+
     gewichtet = {}
     for cat, data in scores.items():
         if cat == "overall" or not isinstance(data, dict):
             continue
-        gewichtet[cat] = einsatzgewichteter_score(cat, data)
+        gewichtet[cat] = einsatzgewichteter_score(cat, data, wachsam)
 
     if not gewichtet:
         key, label, beschreibung = _stufe_fuer(0)
@@ -304,7 +338,7 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None,
             "value": 0.0, "driver": None, "driver_label": None,
             "driver_score": 0.0, "contributing": [], "components": [],
             "reasons": [], "evacuation": None, "signals": [],
-            "lead_time": VORLAUF,
+            "vigilance": wachsamkeit, "lead_time": VORLAUF,
         }
 
     driver = max(gewichtet, key=lambda c: gewichtet[c])
@@ -321,13 +355,23 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None,
     reasons = []
     roh = float((scores.get(driver) or {}).get("score", 0) or 0)
     driver_label = labels.get(driver, driver)
-    bezug = EINSATZBEZUG.get(driver, DEFAULT_BEZUG)
+    bezug = einsatzbezug_fuer(driver, wachsam)
     orts = _ortsfaktor(driver, scores.get(driver) or {})
 
     reasons.append(
         f"{driver_label} steht bei {roh:.0f}/100 und ist damit der treibende Anlass."
     )
-    if bezug < 1.0:
+    if wachsam and driver in EINSATZBEZUG_WACHSAM:
+        normal = EINSATZBEZUG.get(driver, DEFAULT_BEZUG)
+        if bezug > normal:
+            reasons.append(
+                f"Waehrend der laufenden Grosslage zaehlt {driver_label} "
+                f"staerker ({normal:.0%} auf {bezug:.0%}): Ein Massenanfall "
+                f"auf einer Grossveranstaltung ist fuer Troisdorf vor allem "
+                f"eine Betreuungslage — Tausende Unverletzte und Getrennte, "
+                f"die versorgt werden muessen."
+            )
+    elif bezug < 1.0:
         reasons.append(
             f"Der Einsatzbezug dieser Kategorie ist {bezug:.0%} — Troisdorf ist "
             f"Verpflegungs- und Betreuungsstandort, kein Rettungsdienststandort."
@@ -413,5 +457,6 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None,
         "reasons": reasons,
         "evacuation": evakuierung,
         "signals": signale,
+        "vigilance": wachsamkeit,
         "lead_time": VORLAUF,
     }

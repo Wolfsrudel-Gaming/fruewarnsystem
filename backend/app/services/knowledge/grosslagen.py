@@ -152,3 +152,86 @@ def grundlast_text(lage: dict) -> str:
         f"Erwartbar ueber die gesamte Veranstaltung: {', '.join(teile)}. "
         f"Das ist der Normalbetrieb, kein Hinweis auf eine Lage."
     )
+
+
+# ======================================================================
+# Wachsamkeit
+# ======================================================================
+#
+# Eine laufende Grossveranstaltung ist fuer sich genommen harmlos. Sie ist
+# aber ein VERSTAERKER: Bei einer Million Menschen auf 80.000 Quadratmetern
+# wird aus einem kleinen Ereignis binnen Minuten etwas, das den gesamten
+# Grossraum bindet. Ein Massenanfall dort loest ueberoertliche Hilfe aus, und
+# dann laufen auch die Troisdorfer Einheiten.
+#
+# Daraus folgt nicht, lauter zu alarmieren — die Veranstaltung selbst ist
+# Normalbetrieb. Es folgt, GENAUER HINZUSEHEN: haeufiger abfragen, damit eine
+# Abweichung frueher auffaellt, und die Kategorien schaerfer werten, die bei
+# einer solchen Lage tatsaechlich zaehlen.
+
+WACHSAMKEIT_NORMAL = "normal"
+WACHSAMKEIT_ERHOEHT = "erhoeht"
+
+# Zonen, in denen eine Grosslage die Wachsamkeit anhebt. Ein Volksfest in
+# Ostwestfalen aendert hier nichts.
+WACHSAME_ZONEN = ("troisdorf", "nachbarschaft", "rhein_sieg")
+
+# Wie oft waehrend erhoehter Wachsamkeit abgefragt wird, in Sekunden.
+# Bewusst nur die Quellen, die bei einer ploetzlichen Lage als Erste etwas
+# zeigen — nicht jede Schnittstelle. Strompreise und Pegelstaende aendern sich
+# durch eine Kirmes nicht.
+ABTASTUNG_ERHOEHT = {
+    # Amtliche Warnungen: Ein echter Massenanfall erzeugt hier zuerst eine
+    # Meldung. Die wichtigste Quelle ueberhaupt.
+    "warnings": 60,
+    # Presse: nach Auskunft der Einheit der zuverlaessigste Fruehindikator
+    "news": 180,
+    # Feuerwehr Bonn — Puetzchen liegt im Bonner Stadtgebiet
+    "feuerwehr_bonn": 60,
+    # Wetter: der kritische Punkt bei hoher Personendichte im Freien
+    "weather_warnings": 180,
+    # Verkehr: Massenabfluss, Sperrungen, blockierte Rettungswege
+    "traffic": 300,
+}
+
+
+def wachsamkeitsstufe(tag: Optional[date] = None) -> dict:
+    """Aktuelle Wachsamkeit des Systems.
+
+    Erhoeht, solange eine Grosslage in erreichbarer Naehe laeuft. Nicht schon
+    im Vorlauf: Vorher gibt es nichts zu beobachten, was es nicht sonst auch
+    gaebe.
+    """
+    aktive = [l for l in aktive_grosslagen(tag)
+              if l.get("zone") in WACHSAME_ZONEN]
+    if not aktive:
+        return {
+            "stufe": WACHSAMKEIT_NORMAL,
+            "grund": None,
+            "lagen": [],
+            "abtastung": {},
+        }
+
+    namen = ", ".join(l["name"] for l in aktive)
+    besucher = max((l.get("besucher") or 0) for l in aktive)
+    # Tausenderpunkte nach deutscher Schreibweise — getrennt gebildet, damit
+    # die Ersetzung nicht die Satzkommas mitnimmt.
+    besucher_text = f"{besucher:,}".replace(",", ".")
+    return {
+        "stufe": WACHSAMKEIT_ERHOEHT,
+        "grund": (
+            f"{namen} laeuft. Bei dieser Groessenordnung "
+            f"({besucher_text} Besucher) kann aus einem kleinen Ereignis "
+            f"binnen Minuten eine Lage werden, die den gesamten Grossraum "
+            f"bindet. Das System fragt deshalb haeufiger ab und wertet die "
+            f"Kategorien schaerfer, die dabei zaehlen."
+        ),
+        "lagen": [{"name": l["name"], "ort": l["ort"], "zone": l["zone"],
+                   "tag_nummer": l["tag_nummer"],
+                   "tage_gesamt": l["tage_gesamt"]} for l in aktive],
+        "abtastung": dict(ABTASTUNG_ERHOEHT),
+    }
+
+
+def ist_wachsam(tag: Optional[date] = None) -> bool:
+    return wachsamkeitsstufe(tag)["stufe"] == WACHSAMKEIT_ERHOEHT
