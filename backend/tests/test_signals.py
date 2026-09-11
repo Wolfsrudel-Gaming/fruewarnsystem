@@ -7,6 +7,7 @@ hier ist teurer als ein Fehler in jeder Kennzahl.
 """
 
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -25,6 +26,12 @@ def _news(text, score=50):
     """Lage mit einer einzelnen Nachrichtenmeldung."""
     return {"news": {"score": score, "detail": "1 relevante Nachricht",
                      "contributions": [{"reason": text}]}}
+
+
+# Stichtag ohne laufende Grosslage. Ohne ihn haetten diese Tests je nach
+# Kalendertag ein anderes Ergebnis — waehrend Puetzchens Markt laeuft, meldet
+# sich das Grosslagen-Signal zusaetzlich.
+RUHIGER_TAG = date(2026, 3, 15)
 
 
 # --- Ortserkennung ---
@@ -195,25 +202,49 @@ def test_mehrere_signale_werden_gemeldet():
     lage = _news("Fliegerbombe in Troisdorf, 200 Einsatzkraefte im Dauereinsatz")
     lage["events"] = {"score": 50}
     lage["weather"] = {"score": 50}
-    arten = {s["kind"] for s in alle_signale(lage)}
+    arten = {s["kind"] for s in alle_signale(lage, tag=RUHIGER_TAG)}
     assert arten == {"kampfmittel", "verpflegungsbedarf", "kombilage"}
 
 
 def test_kampfmittel_steht_vor_den_anderen():
     """Wichtigstes zuerst — die Reihenfolge landet so in der Begruendung."""
     lage = _news("Fliegerbombe in Troisdorf, 200 Einsatzkraefte im Dauereinsatz")
-    assert alle_signale(lage)[0]["kind"] == "kampfmittel"
+    assert alle_signale(lage, tag=RUHIGER_TAG)[0]["kind"] == "kampfmittel"
+
+
+def test_reihenfolge_der_signale_landet_so_in_der_begruendung():
+    """Die Begruendung wird rueckwaerts aufgebaut.
+
+    Jedes insert(0) draengt das Vorige nach hinten — ein Vorwaertslauf wuerde
+    die Liste umdrehen und das wichtigste Signal ans Ende stellen. Genau das
+    war eine Zeitlang der Fall.
+    """
+    from app.services.knowledge.assessment import assess_deployment
+    lage = _news("Fliegerbombe in Troisdorf, 200 Einsatzkraefte im Dauereinsatz")
+    lage["events"] = {"score": 50}
+    lage["weather"] = {"score": 50}
+    ergebnis = assess_deployment(lage, {}, tag=RUHIGER_TAG)
+
+    reihenfolge = [s["kind"] for s in ergebnis["signals"]]
+    assert reihenfolge[0] == "kampfmittel"
+    # Der Hinweis des wichtigsten Signals steht auch in der Begruendung vorn
+    # (nach dem Evakuierungshinweis, der immer Vorrang hat).
+    kampfmittel_hinweis = ergebnis["signals"][0]["hinweis"]
+    assert kampfmittel_hinweis in ergebnis["reasons"][:2]
 
 
 def test_ruhige_lage_erzeugt_keine_signale():
-    assert alle_signale({"news": {"score": 0}, "weather": {"score": 0}}) == []
+    assert alle_signale({"news": {"score": 0}, "weather": {"score": 0}},
+                        tag=RUHIGER_TAG) == []
 
 
 def test_signale_heben_die_einsatzerwartung():
     from app.services.knowledge.assessment import assess_deployment
-    ohne = assess_deployment(_news("Stadtfest in Troisdorf", score=40), {})
+    ohne = assess_deployment(_news("Stadtfest in Troisdorf", score=40), {},
+                             tag=RUHIGER_TAG)
     mit = assess_deployment(
-        _news("Fliegerbombe in Troisdorf gefunden", score=40), {})
+        _news("Fliegerbombe in Troisdorf gefunden", score=40), {},
+        tag=RUHIGER_TAG)
     assert mit["value"] > ohne["value"]
     assert mit["level"] == "einsatz_wahrscheinlich"
 
@@ -247,7 +278,7 @@ def test_bundesweite_extremwarnung_loest_flaechenlage_aus():
 def test_flaechenlage_hebt_auf_vollalarm():
     """Der gemeldete Fall. Vorher blieb die Bewertung bei rund 51."""
     from app.services.knowledge.assessment import assess_deployment
-    ergebnis = assess_deployment(_amtliche_warnung(), {})
+    ergebnis = assess_deployment(_amtliche_warnung(), {}, tag=RUHIGER_TAG)
     assert ergebnis["level"] == "einsatz_wahrscheinlich"
     assert ergebnis["value"] >= 96
 
@@ -261,8 +292,10 @@ def test_probewarnung_alarmiert_genauso_wie_eine_echte_warnung():
     eine echte Warnung faelschlich fuer eine Uebung halten.
     """
     from app.services.knowledge.assessment import assess_deployment
-    echt = assess_deployment(_amtliche_warnung(is_test=False), {})
-    probe = assess_deployment(_amtliche_warnung(is_test=True), {})
+    echt = assess_deployment(_amtliche_warnung(is_test=False), {},
+                             tag=RUHIGER_TAG)
+    probe = assess_deployment(_amtliche_warnung(is_test=True), {},
+                              tag=RUHIGER_TAG)
     assert probe["value"] == echt["value"]
     assert probe["level"] == echt["level"] == "einsatz_wahrscheinlich"
 
@@ -302,7 +335,7 @@ def test_flaechenlage_steht_ganz_vorn():
     lage = _amtliche_warnung()
     lage["events"] = {"score": 60}
     lage["weather"] = {"score": 60}
-    assert alle_signale(lage)[0]["kind"] == "flaechenlage"
+    assert alle_signale(lage, tag=RUHIGER_TAG)[0]["kind"] == "flaechenlage"
 
 
 def test_nrw_weite_warnung_deckt_troisdorf_ebenfalls():

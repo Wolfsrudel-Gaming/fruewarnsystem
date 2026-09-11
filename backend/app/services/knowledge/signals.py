@@ -183,6 +183,71 @@ def flaechenlage_signal(scores: dict) -> Optional[dict]:
     }
 
 
+def grosslage_signal(scores: dict, tag=None) -> Optional[dict]:
+    """Laeuft gerade eine bekannte Grosslage — oder steht eine bevor?
+
+    Unabhaengig davon, ob eine Veranstaltungs-API sie gerade liefert. Grosse
+    wiederkehrende Feste haben feste Termine; sich darauf zu verlassen, dass
+    ein offener Datensatz sie enthaelt, waere fahrlaessig.
+
+    Das Signal hebt die Bewertung NICHT von selbst an. Eine laufende
+    Grossveranstaltung ist Normalbetrieb, kein Alarmgrund — sie macht nur
+    andere Lagen gefaehrlicher. Genau dafuer ist der Hinweis da: Er nennt die
+    Grundlast, damit ein hoher Messwert nicht als Eskalation gelesen wird, und
+    er macht die Kombilage mit dem Wetter sichtbar.
+    """
+    from app.services.knowledge.grosslagen import (
+        aktive_grosslagen, bevorstehende_grosslagen, grundlast_text,
+    )
+
+    aktive = aktive_grosslagen(tag)
+    if aktive:
+        lage = aktive[0]
+        wetter = float((scores.get("weather") or {}).get("score", 0) or 0)
+        teile = [
+            f"{lage['name']} laeuft (Tag {lage['tag_nummer']} von "
+            f"{lage['tage_gesamt']}, {lage['ort']}).",
+            grundlast_text(lage),
+        ]
+        if wetter >= 50:
+            teile.append(
+                f"Die Wetterlage steht bei {wetter:.0f} — bei dieser "
+                f"Personendichte der kritische Punkt."
+            )
+        return {
+            "kind": "grosslage",
+            "name": lage["name"],
+            "ort": lage["ort"],
+            "zone": lage["zone"],
+            "tag_nummer": lage["tag_nummer"],
+            "tage_gesamt": lage["tage_gesamt"],
+            "besucher": lage.get("besucher"),
+            "bevorstehend": False,
+            "hinweis": " ".join(t for t in teile if t),
+        }
+
+    bevor = bevorstehende_grosslagen(tag)
+    if bevor:
+        lage = bevor[0]
+        return {
+            "kind": "grosslage",
+            "name": lage["name"],
+            "ort": lage["ort"],
+            "zone": lage["zone"],
+            "in_tagen": lage["in_tagen"],
+            "besucher": lage.get("besucher"),
+            "bevorstehend": True,
+            "hinweis": (
+                f"{lage['name']} beginnt in {lage['in_tagen']} Tagen "
+                f"({lage['beginn'].strftime('%d.%m.')}, {lage['ort']}). "
+                f"Der Bedarfsplan plant Sonderbedarf mit mindestens 24 Stunden "
+                f"Vorlauf — fuer eine mehrtaegige Grosslage ist jetzt der "
+                f"Zeitpunkt, Kueche und Fahrzeuge zu pruefen."
+            ),
+        }
+    return None
+
+
 def kombilage_signal(scores: dict, schwelle: float = 40.0) -> Optional[dict]:
     """Veranstaltung und Wetterlage gleichzeitig?
 
@@ -271,14 +336,23 @@ def verpflegungsbedarf_signal(scores: dict) -> Optional[dict]:
     }
 
 
-def alle_signale(scores: dict) -> list:
-    """Alle zutreffenden Signale, wichtigstes zuerst."""
+def alle_signale(scores: dict, tag=None) -> list:
+    """Alle zutreffenden Signale, wichtigstes zuerst.
+
+    ``tag`` legt den Stichtag fuer die Grosslagen fest. In der Anwendung bleibt
+    er leer (dann gilt heute); Tests setzen ihn, damit ihr Ergebnis nicht davon
+    abhaengt, an welchem Kalendertag sie laufen.
+    """
     ergebnis = []
     # Reihenfolge = Dringlichkeit. Die Flaechenlage steht vorn: Sie ist die
-    # deutlichste Lage und gehoert in der Begruendung nach ganz oben.
+    # deutlichste Lage und gehoert in der Begruendung nach ganz oben. Die
+    # Grosslage steht hinten — sie ist Normalbetrieb, nur Zusammenhang.
     for funktion in (flaechenlage_signal, kampfmittel_signal,
                      verpflegungsbedarf_signal, kombilage_signal):
         treffer = funktion(scores)
         if treffer:
             ergebnis.append(treffer)
+    treffer = grosslage_signal(scores, tag=tag)
+    if treffer:
+        ergebnis.append(treffer)
     return ergebnis

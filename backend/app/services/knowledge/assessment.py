@@ -280,7 +280,8 @@ def _stufe_fuer(wert: float) -> tuple:
     return STUFEN[-1][1], STUFEN[-1][2], STUFEN[-1][3]
 
 
-def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> dict:
+def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None,
+                      tag=None) -> dict:
     """Einsatzerwartung aus den aktuellen Risikoscores ableiten.
 
     Liefert die Stufe, den treibenden Anlass, die voraussichtlich gebrauchten
@@ -343,6 +344,29 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> 
     # Evakuierung im Kerngebiet uebersteuert die Rechnung. Sie ist kein
     # Zuschlag, sondern eine Untergrenze — laut Einsatzerfahrung ist der
     # Einsatz dann so gut wie sicher.
+    # Bei ueberoertlichen Lagen die Grundrate nennen. Ohne diesen Hinweis liest
+    # sich ein hoher Wert als Alltagserwartung, obwohl die Landesalarmierung
+    # historisch etwa einmal pro Jahrzehnt vorkommt.
+    if _ortsfaktor(driver, scores.get(driver) or {}) <= ORTSFAKTOR_AUSSERHALB:
+        reasons.append(LANDESALARMIERUNG_HINWEIS)
+
+    # Abgeleitete Signale: Konstellationen, die erfahrungsgemaess zum Einsatz
+    # fuehren, ohne dass ein einzelner Score dafuer hoch genug waere.
+    from app.services.knowledge.signals import alle_signale
+    signale = alle_signale(scores, tag=tag)
+    for signal in signale:
+        untergrenze = SIGNAL_MINDESTWERT.get(signal["kind"])
+        if untergrenze:
+            wert = max(wert, untergrenze)
+
+    # Rueckwaerts einfuegen, damit die Reihenfolge erhalten bleibt: Jedes
+    # insert(0) draengt das Vorige nach hinten, ein Vorwaertslauf wuerde die
+    # Liste also umdrehen und das wichtigste Signal ans Ende stellen.
+    for signal in reversed(signale):
+        reasons.insert(0, signal["hinweis"])
+
+    # Nach den Signalen eingefuegt, damit der Evakuierungshinweis ganz oben
+    # steht — er ist der unmittelbarste Anlass, den es gibt.
     evakuierung = evakuierungshinweis(scores)
     if evakuierung:
         im_kerngebiet = evakuierung.get("zone") == "kerngebiet"
@@ -360,22 +384,6 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None) -> 
                 f"Hinweis auf eine Evakuierung in {evakuierung['ort']} — "
                 f"direkte Nachbarschaft, eine Stufe unter dem Kerngebiet."
             ))
-
-    # Bei ueberoertlichen Lagen die Grundrate nennen. Ohne diesen Hinweis liest
-    # sich ein hoher Wert als Alltagserwartung, obwohl die Landesalarmierung
-    # historisch etwa einmal pro Jahrzehnt vorkommt.
-    if _ortsfaktor(driver, scores.get(driver) or {}) <= ORTSFAKTOR_AUSSERHALB:
-        reasons.append(LANDESALARMIERUNG_HINWEIS)
-
-    # Abgeleitete Signale: Konstellationen, die erfahrungsgemaess zum Einsatz
-    # fuehren, ohne dass ein einzelner Score dafuer hoch genug waere.
-    from app.services.knowledge.signals import alle_signale
-    signale = alle_signale(scores)
-    for signal in signale:
-        untergrenze = SIGNAL_MINDESTWERT.get(signal["kind"])
-        if untergrenze:
-            wert = max(wert, untergrenze)
-        reasons.insert(0, signal["hinweis"])
 
     key, label, beschreibung = _stufe_fuer(wert)
 

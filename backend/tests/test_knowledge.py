@@ -174,7 +174,28 @@ def test_nachbarkreis_regel_ist_hinterlegt():
 
 def test_jeder_bereich_ist_vertreten():
     bereiche = {e["scope"] for e in ALL_ENTRIES}
-    assert bereiche == {"troisdorf", "rhein_sieg", "nrw", "bund"}
+    assert bereiche == {"troisdorf", "nachbarschaft", "rhein_sieg", "nrw",
+                        "bund"}
+
+
+def test_wissensbereiche_entsprechen_den_ortszonen():
+    """Wissen und Ortsbewertung muessen dieselbe Einteilung verwenden.
+
+    Laufen sie auseinander, bewertet das System eine Meldung anders, als es
+    das Wissen dazu gewichtet.
+    """
+    from app.services.knowledge.knowledge_base import SCOPE_WEIGHT
+    for scope in KnowledgeScope:
+        assert scope in SCOPE_WEIGHT, scope
+
+
+def test_scope_gewichte_bleiben_absteigend():
+    from app.services.knowledge.knowledge_base import SCOPE_WEIGHT
+    reihe = [KnowledgeScope.TROISDORF, KnowledgeScope.NACHBARSCHAFT,
+             KnowledgeScope.RHEIN_SIEG, KnowledgeScope.NRW,
+             KnowledgeScope.BUND]
+    werte = [SCOPE_WEIGHT[s] for s in reihe]
+    assert werte == sorted(werte, reverse=True)
 
 
 def test_die_wichtigsten_wissensarten_sind_vertreten():

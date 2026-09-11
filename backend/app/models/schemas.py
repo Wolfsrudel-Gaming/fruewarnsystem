@@ -589,8 +589,17 @@ class SituationReportCache(Base):
 class KnowledgeScope(str, enum.Enum):
     """Geltungsbereich eines Wissenseintrags — von der eigenen Bereitschaft
     bis zur Bundesebene. Bestimmt, wie stark ein Eintrag die Lagebewertung
-    fuer Troisdorf beeinflusst."""
+    fuer Troisdorf beeinflusst.
+
+    Die Stufen entsprechen den Zonen in services/knowledge/geo.py, damit
+    Wissen und Ortsbewertung dieselbe Einteilung verwenden.
+
+    NACHBARSCHAFT kam spaeter dazu. Ein bestehender Postgres-Enum-Typ wird von
+    create_all NICHT erweitert — die Ergaenzung erledigt
+    services/maintenance.py beim Start.
+    """
     TROISDORF = "troisdorf"
+    NACHBARSCHAFT = "nachbarschaft"
     RHEIN_SIEG = "rhein_sieg"
     NRW = "nrw"
     BUND = "bund"

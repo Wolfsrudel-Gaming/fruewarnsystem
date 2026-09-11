@@ -14,11 +14,12 @@ Sie sind bewusst idempotent: ein zweiter Lauf findet nichts mehr zu tun.
 """
 
 import logging
+import re
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
-from app.models.database import async_session
+from app.models.database import async_session, engine
 from app.models.schemas import Alert, AlertFeedback, WeatherData
 
 logger = logging.getLogger(__name__)
@@ -209,10 +210,70 @@ async def collapse_alert_duplicates(dry_run: bool = False) -> dict:
     return {"superseded": superseded, "episodes": episodes, "dry_run": dry_run}
 
 
+# Enum-Werte, die nach der ersten Auslieferung dazugekommen sind.
+#
+# create_all legt fehlende TABELLEN an, erweitert aber keinen bestehenden
+# Postgres-Enum-Typ. Ohne diese Ergaenzung schlaegt jeder Schreibvorgang mit
+# dem neuen Wert fehl — und zwar erst zur Laufzeit, nicht beim Start.
+ENUM_NACHTRAEGE = {
+    "knowledgescope": ("nachbarschaft",),
+}
+
+# Enum-Typen und -Werte bestehen nur aus Kleinbuchstaben, Ziffern und
+# Unterstrichen. Die Pruefung verhindert, dass je etwas anderes in eine
+# Anweisung geraet, die keine Parameter zulaesst.
+_BEZEICHNER = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
+
+
+def _ist_sicherer_bezeichner(wert: str) -> bool:
+    return bool(_BEZEICHNER.match(wert or ""))
+
+
+async def ergaenze_enum_werte() -> dict:
+    """Fehlende Enum-Werte nachtragen.
+
+    Zwei Eigenheiten von Postgres bestimmen die Umsetzung:
+
+    * ``ALTER TYPE ... ADD VALUE`` nimmt KEINE gebundenen Parameter. Der Wert
+      muss als Literal im Anweisungstext stehen. Die Werte stammen
+      ausschliesslich aus ``ENUM_NACHTRAEGE`` hier im Code; zur Sicherheit
+      wird die Schreibweise trotzdem geprueft, bevor sie eingesetzt wird.
+    * Ein neu hinzugefuegter Wert darf in derselben Transaktion nicht benutzt
+      werden. Deshalb laeuft jede Anweisung auf einer eigenen Verbindung im
+      Autocommit-Modus.
+
+    ``IF NOT EXISTS`` macht den Lauf idempotent.
+    """
+    ergaenzt = []
+    for typ, werte in ENUM_NACHTRAEGE.items():
+        for wert in werte:
+            if not _ist_sicherer_bezeichner(typ) or not _ist_sicherer_bezeichner(wert):
+                logger.error("Enum-Nachtrag uebersprungen: %s.%s", typ, wert)
+                continue
+            try:
+                async with engine.connect() as conn:
+                    await conn.execution_options(isolation_level="AUTOCOMMIT")
+                    await conn.execute(text(
+                        f"ALTER TYPE {typ} ADD VALUE IF NOT EXISTS '{wert}'"
+                    ))
+                ergaenzt.append(f"{typ}.{wert}")
+            except Exception as e:
+                # Existiert der Typ noch nicht, legt create_all ihn ohnehin
+                # vollstaendig an — das ist kein Fehler.
+                logger.debug("Enum %s.%s nicht ergaenzt: %s", typ, wert, e)
+
+    if ergaenzt:
+        logger.info("Enum-Werte geprueft: %s", ", ".join(ergaenzt))
+    return {"geprueft": ergaenzt}
+
+
 async def run_startup_maintenance() -> dict:
     """Beim Start einmal aufraeumen — Fehler hier duerfen den Start nicht stoppen."""
     result: dict = {}
     for name, func in (
+        # Zuerst das Schema, dann die Daten — sonst scheitern Schreibvorgaenge
+        # mit neuen Enum-Werten.
+        ("enums", ergaenze_enum_werte),
         ("weather", collapse_weather_duplicates),
         ("alerts", collapse_alert_duplicates),
     ):

@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # in Troisdorf ist fuer die eigene Lage wichtiger als ein Landeskonzept.
 SCOPE_WEIGHT = {
     KnowledgeScope.TROISDORF: 1.0,
+    # Direkte Nachbarschaft — Siegburg, Sankt Augustin, Niederkassel, Lohmar,
+    # Hennef und Grosslagen unmittelbar an der Kreisgrenze.
+    KnowledgeScope.NACHBARSCHAFT: 0.9,
     KnowledgeScope.RHEIN_SIEG: 0.8,
     KnowledgeScope.NRW: 0.5,
     KnowledgeScope.BUND: 0.4,

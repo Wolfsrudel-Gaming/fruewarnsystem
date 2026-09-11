@@ -1026,5 +1026,145 @@ anschlagen und die Lage ueber Tage anhaelt.
     ),
 ]
 
+
+# ======================================================================
+# Bekannte Grosslagen der Region
+# ======================================================================
+
+BONN = "Bundesstadt Bonn / Veranstalter Puetzchens Markt"
+BONN_URL = "https://www.bonn.de/bonn-erleben/ausgehen-und-erleben/puetzchens-markt.php"
+
+SEED_ENTRIES += [
+
+    _e(
+        "grosslage.puetzchens_markt", "gefahrenobjekt", "nachbarschaft",
+        "Puetzchens Markt — groesste Grosslage der Region",
+        """
+Groesstes Volksfest der Region, jaehrlich in Bonn-Beuel, Stadtteil Puetzchen.
+
+TERMIN: Freitag vor dem zweiten Sonntag im September bis zum Dienstag danach,
+also fuenf Tage. 2026: 11. bis 15. September (657. Auflage). Die Regel gilt
+jedes Jahr und ist im System hinterlegt — der Termin muss nicht gepflegt
+werden.
+
+GROESSE
+- rund 1 Million Besucher, 2025 amtlich etwa 950.000
+- 80.000 Quadratmeter Veranstaltungsflaeche
+- etwa 500 Geschaefte, davon 170 auf dem Hauptgelaende mit 24 Fahrgeschaeften
+- geoeffnet bis 3 Uhr nachts (Fr/Sa), sonst bis 1 Uhr
+- Abschlussfeuerwerk am Dienstag gegen 22 Uhr
+
+LAGE UND BEZUG ZU TROISDORF
+Puetzchen liegt rechtsrheinisch in Bonn-Beuel, unmittelbar an der Grenze zu
+Sankt Augustin. Es verkehren Sonderbuslinien aus der Region, darunter die
+Linie P20 DIREKT AUS TROISDORF und die P40 ueber Sankt Augustin. Troisdorfer
+Buergerinnen und Buerger sind dort also in relevanter Zahl unterwegs, auch
+wenn Troisdorf selbst nicht Veranstaltungsort ist.
+
+ORGANISATION DER GEFAHRENABWEHR
+Feuerwehr, Rettungsdienst und Sanitaetsdienst sind gemeinsam in der
+Marktschule stationiert. Dazu kommen eine Rettungswache auf dem Gelaende und
+mobile Sanitaetstrupps, die die Marktstrassen abgehen. Die zentrale
+Befehlsstelle liegt im Polizeipraesidium; Ordnungsamt und Polizei nutzen
+Raeume in der Von-Ketteler-Strasse.
+        """,
+        categories=["events", "manv", "health", "traffic"],
+        tags=["Puetzchens Markt", "Grossveranstaltung", "Kirmes", "Bonn",
+              "Beuel", "Sanitaetsdienst", "P20", "Feuerwerk"],
+        trigger={"categories": ["events"], "min_score": 30},
+        facts={"besucher": 1000000, "flaeche_qm": 80000, "geschaefte": 500,
+               "fahrgeschaefte": 24, "dauer_tage": 5},
+        source=BONN, source_url=BONN_URL, source_date="2026-09",
+    ),
+
+    _e(
+        "grosslage.puetzchens_markt.grundlast", "erfahrung", "nachbarschaft",
+        "Puetzchens Markt — was normal ist (Grundlast)",
+        """
+Der wichtigste Teil des Wissens ueber diese Veranstaltung: Sie erzeugt im
+Normalbetrieb eine hohe, aber voellig erwartbare Zahl an Hilfeleistungen.
+
+AMTLICHE BILANZEN
+2024: 98 Rettungsdiensteinsaetze, davon 13 mit Notarzt. Der Sanitaetsdienst
+      leistete 279-mal Hilfe. Die Feuerwehr rueckte zu KEINEM Einsatz aus.
+2025: rund 180 Behandlungen durch Sanitaets- und Rettungsdienst, davon 48
+      Transporte ins Krankenhaus, 8 mit Notarztbegleitung. Die Feuerwehr war
+      durchgehend praesent, musste aber ebenfalls nicht ausruecken.
+      Dazu 132 abgeschleppte Fahrzeuge wegen blockierter Rettungswege und
+      740 Verwarnungen wegen Falschparkens.
+
+Beide Jahre wurden amtlich als ruhige Veranstaltung mit ueberschaubarer
+Einsatzlage bewertet.
+
+WAS DARAUS FOLGT
+Eine Schlagzeile wie "Rettungsdienst im Dauereinsatz auf Puetzchens Markt"
+beschreibt den NORMALZUSTAND, nicht eine Eskalation. Ohne dieses Wissen wuerde
+das Fruehwarnsystem jeden September Alarm schlagen, ohne dass etwas
+Ungewoehnliches passiert.
+
+Massstab ist deshalb die Grundlast, nicht die absolute Zahl. Auffaellig wird
+eine Meldung erst beim Etwa-Doppelten der Erwartungswerte.
+
+EINE AUSNAHME: Die Grundlast der Feuerwehr ist NULL. In beiden ausgewerteten
+Jahren gab es keinen einzigen Feuerwehreinsatz auf dem Gelaende. Jede Meldung
+ueber einen Feuerwehreinsatz dort ist damit per Definition auffaellig — und
+bei 80.000 Quadratmetern Kirmes mit Gasflaschen, Fritteusen und
+Stromaggregaten ein ernstzunehmender Anlass.
+        """,
+        categories=["events", "news", "health", "fire"],
+        tags=["Grundlast", "Erwartungswert", "Puetzchens Markt", "Bilanz",
+              "Fehlalarm", "Rettungsdienst"],
+        facts={"behandlungen_2024": 279, "rettungseinsaetze_2024": 98,
+               "notarzt_2024": 13, "behandlungen_2025": 180,
+               "transporte_2025": 48, "notarzt_2025": 8,
+               "feuerwehreinsaetze": 0, "besucher_2025": 950000},
+        source="Bundesstadt Bonn, Pressebilanzen 2024 und 2025",
+        source_url="https://www.bonn.de/pressemitteilungen/september/erfolgreicher-puetzchens-markt-2025.php",
+        source_date="2025-09",
+    ),
+
+    _e(
+        "grosslage.puetzchens_markt.risiken", "ausloeser", "nachbarschaft",
+        "Puetzchens Markt — woran eine echte Lage erkennbar waere",
+        """
+Die Veranstaltung laeuft geordnet. Die Punkte, an denen es kippen koennte:
+
+WETTER. Fuenf Tage Freiflaeche mit bis zu sechsstelligen Besucherzahlen,
+abends bis 3 Uhr. Sturm, Gewitter oder Starkregen treffen hier auf hohe
+Personendichte und Fahrgeschaefte in Hoehe. Das ist der klassische Fall der
+Kombilage — Veranstaltung und Wetterlage zusammen.
+
+FEUERWERK AM DIENSTAG gegen 22 Uhr. Zeitpunkt der hoechsten Personendichte
+und der schwierigsten Raeumung.
+
+BLOCKIERTE RETTUNGSWEGE. 2025 wurden 132 Fahrzeuge abgeschleppt, weil sie
+Rettungswege versperrten. Im Normalbetrieb ist das eine Ordnungswidrigkeit —
+bei einer Raeumungslage waere es ein Problem.
+
+BRANDGEFAHR. Gasflaschen, Fritteusen, Stromaggregate auf engem Raum. Die
+Feuerwehr ist deshalb durchgehend vor Ort, obwohl sie in den ausgewerteten
+Jahren nicht ausruecken musste.
+
+GEWALTDELIKTE in den Abend- und Nachtstunden, schwerpunktmaessig auf dem
+zentralen Platz. Die Polizei setzt 2026 zwei mobile Kameratuerme ein und hat
+15 Personen mit Gewalthintergrund vorsorglich vom Gelaende ausgeschlossen.
+Auf dem gesamten Gelaende gilt ein Messertrageverbot.
+
+BEDEUTUNG FUER TROISDORF
+Troisdorf ist nicht Veranstalter und stellt dort keinen regulaeren
+Sanitaetsdienst. Relevant wird die Lage auf zwei Wegen: ueber die
+nachbarschaftliche Hilfe bei einer Grossschadenslage, und ueber die
+Troisdorfer Besucher, die mit der Sonderbuslinie P20 anreisen.
+        """,
+        categories=["events", "weather", "fire", "traffic", "manv"],
+        tags=["Kombilage", "Feuerwerk", "Rettungsweg", "Brandgefahr",
+              "Messerverbot", "Puetzchens Markt"],
+        trigger={"categories": ["events", "weather"], "min_score": 40},
+        source="Bundesstadt Bonn / Polizei Bonn, Einsatzkonzeption 2026",
+        source_url="https://www.presseportal.de/blaulicht/pm/7304/6347705",
+        source_date="2026-09",
+    ),
+]
+
 # Alles, was beim Start eingespielt wird
 ALL_ENTRIES = SEED_ENTRIES + LOCAL_ENTRIES

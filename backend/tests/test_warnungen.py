@@ -12,6 +12,7 @@ Zwei Faelle vom Bundesweiten Warntag 2026, beide am lebenden System geprueft:
 """
 
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -119,6 +120,11 @@ def test_echte_lage_ist_keine_probewarnung():
 
 # --- Zusammenspiel: die Lage faellt nach der Entwarnung ---
 
+# Stichtag ohne laufende Grosslage — sonst haengt das Ergebnis vom
+# Kalendertag ab, an dem die Tests laufen.
+RUHIGER_TAG = date(2026, 3, 15)
+
+
 def _lage(score, **kw):
     basis = {
         "score": score, "detail": "1 aktive Warnung",
@@ -139,11 +145,11 @@ def test_lage_faellt_nach_der_entwarnung_auf_ruhe():
     """
     from app.services.knowledge.assessment import assess_deployment
 
-    waehrend = assess_deployment(_lage(100), {})
+    waehrend = assess_deployment(_lage(100), {}, tag=RUHIGER_TAG)
     danach = assess_deployment(_lage(
         0, covers_us=False, flaechendeckend=0, cancelled=1,
         max_severity=None, max_urgency=None, area_scope="unbekannt",
-        detail="Keine aktive Warnung · 1 Entwarnung"), {})
+        detail="Keine aktive Warnung · 1 Entwarnung"), {}, tag=RUHIGER_TAG)
 
     assert waehrend["level"] == "einsatz_wahrscheinlich"
     assert danach["level"] == "ruhe"
