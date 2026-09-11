@@ -106,6 +106,15 @@ class Settings(BaseSettings):
     interval_flood_warnings: int = 600
     interval_lightning: int = 300
     interval_feuerwehr_bonn: int = 120
+    # Soziale Netze: frueheste Quelle, deshalb haeufiger als die Presse.
+    # Waehrend einer Grosslage weiter verkuerzt (siehe grosslagen.py).
+    interval_social: int = 300
+
+    # Bluesky-Beitragssuche verlangt eine Anmeldung. Ohne Zugangsdaten bleibt
+    # der Abruf still; Mastodon laeuft ohne. App-Passwort verwenden, nie das
+    # Kontopasswort.
+    bluesky_handle: str = ""
+    bluesky_app_password: str = ""
 
     model_config = {"env_file": ".env", "env_prefix": "FWS_"}
 

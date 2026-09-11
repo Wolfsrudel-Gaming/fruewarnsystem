@@ -220,6 +220,10 @@ async def calculate_risk_scores() -> dict:
         scores["power"] = await _calc_power_score(session)
         scores["events"] = await _calc_events_score(session)
         scores["shipping"] = await _calc_shipping_score(session)
+        # Kein Risikowert, sondern ein Fruehindikator: Das Aufkommen in
+        # sozialen Netzen. Traegt bewusst 0 zum Gesamtrisiko bei — die
+        # Auswertung passiert ueber das Signal, nicht ueber den Score.
+        scores["social"] = await _calc_social_indicator(session)
 
         # Gelernte Multiplikatoren auf die Basisgewichte anwenden. Das
         # Basisgewicht bleibt als base_weight sichtbar, damit im Dashboard
@@ -1542,6 +1546,60 @@ async def _calc_events_score(session) -> dict:
         "score": min(100, best),
         "weight": 0.4,
         "detail": f"{len(events)} Veranstaltungen, {len(high_risk)} mit erhöhtem Risiko",
+        "contributions": contributions,
+    }
+
+
+async def _calc_social_indicator(session) -> dict:
+    """Aufkommen in sozialen Netzen — Fruehindikator, kein Risikowert.
+
+    Bewusst mit Score 0: Ein Aufkommen darf die Gesamtlage nicht von selbst
+    anheben, denn es ist unbestaetigt. Bewertet wird es ueber das Signal in
+    services/knowledge/signals.py, das die Unsicherheit ausdruecklich benennt.
+    """
+    from app.models.schemas import SocialPost
+    from app.services.knowledge.social_burst import FENSTER, finde_aufkommen
+
+    # Etwas mehr als das Auswertefenster laden, damit Beitraege am Rand nicht
+    # verlorengehen.
+    cutoff = datetime.utcnow() - FENSTER * 2
+    posts = (await session.execute(
+        select(SocialPost)
+        .where(and_(SocialPost.is_incident == True,
+                    SocialPost.posted_at.isnot(None),
+                    SocialPost.posted_at > cutoff))
+        .order_by(SocialPost.posted_at.desc())
+        .limit(300)
+    )).scalars().all()
+
+    aufkommen = finde_aufkommen(posts)
+
+    contributions = []
+    if aufkommen:
+        contributions.append(_contrib(
+            source=f"Soziale Netze – {aufkommen['ort']}",
+            source_type="social_burst",
+            value=f"{aufkommen['konten']} Konten",
+            points=0,
+            reason=(
+                f"{aufkommen['beitraege']} Beitraege von "
+                f"{aufkommen['konten']} Konten binnen "
+                f"{aufkommen['fenster_minuten']} Minuten · UNBESTAETIGT"
+            ),
+        ))
+
+    return {
+        # Nie ein eigener Risikowert — siehe Beschreibung oben
+        "score": 0,
+        "weight": 0.0,
+        "detail": (
+            f"Aufkommen zu {aufkommen['ort']}: {aufkommen['beitraege']} "
+            f"Beitraege, {aufkommen['konten']} Konten"
+            if aufkommen else
+            f"{len(posts)} Beitraege mit Ereignisbezug, kein Aufkommen"
+        ),
+        "burst": aufkommen,
+        "posts_gesamt": len(posts),
         "contributions": contributions,
     }
 

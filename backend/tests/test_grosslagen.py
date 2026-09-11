@@ -221,18 +221,30 @@ def test_nur_nahe_zonen_heben_die_wachsamkeit():
     assert set(WACHSAME_ZONEN) <= {"troisdorf", "nachbarschaft", "rhein_sieg"}
 
 
+# Welche Einstellung den Regelabstand eines Jobs vorgibt. Muss jeden Eintrag
+# aus ABTASTUNG_ERHOEHT abdecken — der Test darunter erzwingt das, damit ein
+# neuer Kollektor nicht stillschweigend ungeprueft bleibt.
+REGELABSTAND_QUELLE = {
+    "warnings": "interval_warnings",
+    "news": "interval_news",
+    "social": "interval_social",
+    "feuerwehr_bonn": "interval_feuerwehr_bonn",
+    "weather_warnings": "interval_weather",
+    "traffic": "interval_traffic",
+}
+
+
+def test_jeder_verkuerzte_job_hat_einen_bekannten_regelabstand():
+    """Sonst laesst sich nicht pruefen, ob die Verkuerzung eine ist."""
+    assert set(ABTASTUNG_ERHOEHT) <= set(REGELABSTAND_QUELLE)
+
+
 def test_abtastung_wird_kuerzer_nicht_laenger():
     """Die verkuerzten Abstaende muessen unter den Regelwerten liegen."""
     from app.config import settings
-    regel = {
-        "warnings": settings.interval_warnings,
-        "news": settings.interval_news,
-        "feuerwehr_bonn": settings.interval_feuerwehr_bonn,
-        "weather_warnings": settings.interval_weather,
-        "traffic": settings.interval_traffic,
-    }
     for job, sekunden in ABTASTUNG_ERHOEHT.items():
-        assert sekunden <= regel[job], f"{job} wuerde seltener abfragen"
+        regel = getattr(settings, REGELABSTAND_QUELLE[job])
+        assert sekunden <= regel, f"{job} wuerde seltener abfragen"
 
 
 def test_abtastung_bleibt_hoeflich():

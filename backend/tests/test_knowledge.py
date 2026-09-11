@@ -337,15 +337,28 @@ def test_landesalarmierung_haelt_die_grundrate_fest():
 
 
 def test_ortsstufen_im_wissen_und_im_code_stimmen_ueberein():
-    """Sonst behauptet die Wissensdatenbank etwas anderes als die Bewertung."""
+    """Jeder Ort, den die Bewertung kennt, muss irgendwo begruendet sein.
+
+    Geprueft wird ueber ALLE Eintraege, nicht nur den zur Ortsabstufung:
+    Puetzchen etwa steht in der Bewertung, weil die Recherche zu Puetzchens
+    Markt es hergibt — diese Begruendung gehoert dorthin und nicht in einen
+    Eintrag, der als Aussage der Einheit gekennzeichnet ist.
+    """
     from app.services.knowledge.assessment import KERNGEBIET, NACHBARSCHAFT
-    body = _entry("eigen.ortsstufen")["body"].lower()
-    for ort in KERNGEBIET:
-        assert ort in body, f"{ort} fehlt im Wissenseintrag"
-    for ort in NACHBARSCHAFT:
+
+    alle_texte = " ".join(
+        f"{e['title']} {e['body']} {' '.join(e['tags'])}" for e in ALL_ENTRIES
+    ).lower()
+
+    for ort in list(KERNGEBIET) + list(NACHBARSCHAFT):
         if "." in ort:
             continue  # Schreibvariante, im Fliesstext nicht noetig
-        assert ort in body, f"{ort} fehlt im Wissenseintrag"
+        # Umschrift mitpruefen: Die Eintraege sind bewusst ohne Umlaute
+        # geschrieben, die Ortsliste nicht durchgaengig.
+        varianten = {ort, ort.replace("ü", "ue").replace("ö", "oe")
+                            .replace("ä", "ae")}
+        assert any(v in alle_texte for v in varianten), \
+            f"{ort} steht in der Bewertung, ist aber nirgends begruendet"
 
 
 if __name__ == "__main__":

@@ -33,6 +33,11 @@ TROISDORFER_STADTTEILE = (
 NACHBARSCHAFT = (
     "niederkassel", "sankt augustin", "st. augustin", "st.augustin",
     "lohmar", "hennef",
+    # Puetzchen gehoert zu Bonn, grenzt aber unmittelbar an Sankt Augustin.
+    # Waehrend Puetzchens Markt stehen dort bis zu sechsstellige
+    # Besucherzahlen, und es faehrt eine Sonderbuslinie aus Troisdorf.
+    # Deshalb der Stadtteil ausdruecklich — nicht ganz Bonn.
+    "pützchen", "puetzchen", "pützchens markt", "puetzchens markt",
 )
 
 # Uebriger Rhein-Sieg-Kreis

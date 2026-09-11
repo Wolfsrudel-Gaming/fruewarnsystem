@@ -183,6 +183,39 @@ def flaechenlage_signal(scores: dict) -> Optional[dict]:
     }
 
 
+def social_signal(scores: dict, wachsam: bool = False) -> Optional[dict]:
+    """Ungewoehnliches Aufkommen in sozialen Netzen.
+
+    Der frueheste Kanal, den es gibt — und der unzuverlaessigste. Ein einzelner
+    Beitrag loest hier nie etwas aus; verlangt werden mehrere unabhaengige
+    Konten binnen kurzer Zeit (siehe social_burst.py).
+
+    Das Signal hebt die Bewertung nur auf Bereitstellung, nicht auf Einsatz:
+    Solange nichts bestaetigt ist, ist Nachsehen die richtige Reaktion, nicht
+    Ausruecken. Waehrend einer laufenden Grosslage wiegt es schwerer — dort ist
+    ein ploetzliches Aufkommen deutlich wahrscheinlicher echt.
+    """
+    from app.services.knowledge.social_burst import beschreibe
+
+    daten = scores.get("social")
+    if not isinstance(daten, dict):
+        return None
+    aufkommen = daten.get("burst")
+    if not aufkommen:
+        return None
+
+    return {
+        "kind": "social_aufkommen",
+        "ort": aufkommen.get("ort"),
+        "zone": aufkommen.get("zone"),
+        "beitraege": aufkommen.get("beitraege"),
+        "konten": aufkommen.get("konten"),
+        "stark": bool(aufkommen.get("stark")),
+        "unbestaetigt": True,
+        "hinweis": beschreibe(aufkommen, wachsam=wachsam),
+    }
+
+
 def grosslage_signal(scores: dict, tag=None) -> Optional[dict]:
     """Laeuft gerade eine bekannte Grosslage — oder steht eine bevor?
 
@@ -336,7 +369,7 @@ def verpflegungsbedarf_signal(scores: dict) -> Optional[dict]:
     }
 
 
-def alle_signale(scores: dict, tag=None) -> list:
+def alle_signale(scores: dict, tag=None, wachsam: bool = False) -> list:
     """Alle zutreffenden Signale, wichtigstes zuerst.
 
     ``tag`` legt den Stichtag fuer die Grosslagen fest. In der Anwendung bleibt
@@ -352,6 +385,12 @@ def alle_signale(scores: dict, tag=None) -> list:
         treffer = funktion(scores)
         if treffer:
             ergebnis.append(treffer)
+    treffer = social_signal(scores, wachsam=wachsam)
+    if treffer:
+        # Vor der Grosslage, hinter den bestaetigten Lagen: Ein Aufkommen ist
+        # ein Hinweis, keine Tatsache — aber ein sehr frueher.
+        ergebnis.append(treffer)
+
     treffer = grosslage_signal(scores, tag=tag)
     if treffer:
         ergebnis.append(treffer)

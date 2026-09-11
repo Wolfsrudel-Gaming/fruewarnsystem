@@ -1383,3 +1383,82 @@ async def get_deployment_assessment():
     except Exception:
         assessment["knowledge"] = []
     return assessment
+
+
+@router.get("/social")
+async def get_social(
+    hours: int = Query(6, ge=1, le=72),
+    db: AsyncSession = Depends(get_db),
+):
+    """Beiträge aus sozialen Netzen mit Ereignis- und Ortsbezug.
+
+    Der früheste Kanal, den das System hat — und der unzuverlässigste. Ein
+    einzelner Beitrag bedeutet nichts; ausgewertet wird das Aufkommen
+    mehrerer unabhängiger Konten (siehe services/knowledge/social_burst.py).
+    Die Antwort enthält deshalb beides: die Einzelbeiträge zum Nachlesen und
+    das erkannte Aufkommen.
+    """
+    from app.models.schemas import SocialPost
+    from app.services.knowledge.social_burst import beschreibe, finde_aufkommen
+
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    posts = (await db.execute(
+        select(SocialPost)
+        .where(and_(SocialPost.is_incident == True,
+                    SocialPost.posted_at > cutoff))
+        .order_by(desc(SocialPost.posted_at))
+        .limit(200)
+    )).scalars().all()
+
+    aufkommen = finde_aufkommen(posts)
+
+    return {
+        "count": len(posts),
+        "burst": aufkommen,
+        "burst_text": beschreibe(aufkommen) if aufkommen else None,
+        "unverified": True,
+        "hinweis": (
+            "Soziale Netze sind der schnellste, aber auch der unzuverlässigste "
+            "Kanal. Einzelne Beiträge sind Gerüchte — erst mehrere unabhängige "
+            "Konten binnen kurzer Zeit ergeben einen Hinweis."
+        ),
+        "posts": [
+            {
+                "id": p.id,
+                "source": p.source,
+                "author": p.author,
+                "content": p.content,
+                "url": p.url,
+                "place": p.place,
+                "scope": p.scope,
+                "keywords": p.keywords or [],
+                "relevance": p.relevance,
+                "posted_at": p.posted_at.isoformat() if p.posted_at else None,
+            }
+            for p in posts
+        ],
+    }
+
+
+@router.get("/vigilance")
+async def get_vigilance():
+    """Arbeitet das System gerade im verschärften Modus?
+
+    Während einer Großlage in erreichbarer Nähe fragt es häufiger ab und
+    gewichtet die Kategorien schärfer, die bei einer solchen Lage zählen.
+    Das ist kein Alarm — nur mehr Aufmerksamkeit.
+    """
+    from app.services.knowledge.grosslagen import (
+        bevorstehende_grosslagen, wachsamkeitsstufe,
+    )
+
+    stufe = wachsamkeitsstufe()
+    bevor = bevorstehende_grosslagen()
+    return {
+        **stufe,
+        "bevorstehend": [
+            {"name": l["name"], "ort": l["ort"],
+             "beginn": l["beginn"].isoformat(), "in_tagen": l["in_tagen"]}
+            for l in bevor
+        ],
+    }

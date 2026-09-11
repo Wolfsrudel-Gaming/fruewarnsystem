@@ -152,6 +152,11 @@ EVAKUIERUNG_MINDESTWERT_NACHBARSCHAFT = 66.0
 # frueher erkannt. Verpflegungsbedarf und Kombilage heben auf Bereitstellung,
 # nicht auf Einsatz: Sie sagen, dass es eng werden kann, nicht dass es eng ist.
 SIGNAL_MINDESTWERT = {
+    # Aufkommen in sozialen Netzen: der frueheste Hinweis, aber unbestaetigt.
+    # Hebt auf Bereitstellung, nie auf Einsatz — nachsehen ist die richtige
+    # Reaktion, nicht ausruecken. Waehrend einer Grosslage eine Stufe hoeher
+    # (siehe SIGNAL_MINDESTWERT_WACHSAM).
+    "social_aufkommen": 52.0,
     # Eine amtliche Extremwarnung fuer das ganze Bundesgebiet ist die
     # deutlichste Lage, die es gibt. Ausserhalb von Probealarmen bedeutet sie
     # eine reale, grossflaechige Gefahr — da haelt sich das Fruehwarnsystem
@@ -160,6 +165,13 @@ SIGNAL_MINDESTWERT = {
     "kampfmittel": 82.0,
     "verpflegungsbedarf": 68.0,
     "kombilage": 62.0,
+}
+
+# Untergrenzen waehrend einer laufenden Grosslage. Ein ploetzliches Aufkommen
+# auf einem Volksfest mit sechsstelliger Besucherzahl ist deutlich
+# wahrscheinlicher echt als dasselbe Aufkommen an einem ruhigen Dienstag.
+SIGNAL_MINDESTWERT_WACHSAM = {
+    "social_aufkommen": 68.0,
 }
 
 # Wie oft das Land das in Troisdorf stationierte Betreuungsgespann tatsaechlich
@@ -397,9 +409,12 @@ def assess_deployment(scores: dict, kategorie_labels: Optional[dict] = None,
     # Abgeleitete Signale: Konstellationen, die erfahrungsgemaess zum Einsatz
     # fuehren, ohne dass ein einzelner Score dafuer hoch genug waere.
     from app.services.knowledge.signals import alle_signale
-    signale = alle_signale(scores, tag=tag)
+    signale = alle_signale(scores, tag=tag, wachsam=wachsam)
     for signal in signale:
         untergrenze = SIGNAL_MINDESTWERT.get(signal["kind"])
+        if wachsam:
+            untergrenze = SIGNAL_MINDESTWERT_WACHSAM.get(
+                signal["kind"], untergrenze)
         if untergrenze:
             wert = max(wert, untergrenze)
 

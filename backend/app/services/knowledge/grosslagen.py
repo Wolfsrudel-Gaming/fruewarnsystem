@@ -181,6 +181,10 @@ WACHSAME_ZONEN = ("troisdorf", "nachbarschaft", "rhein_sieg")
 # zeigen — nicht jede Schnittstelle. Strompreise und Pegelstaende aendern sich
 # durch eine Kirmes nicht.
 ABTASTUNG_ERHOEHT = {
+    # Soziale Netze zuerst: Wer auf dem Platz steht und etwas sieht, schreibt
+    # darueber, lange bevor eine Leitstelle eine Meldung herausgibt. Genau
+    # diese Vorlaufzeit ist bei einer Grosslage entscheidend.
+    "social": 90,
     # Amtliche Warnungen: Ein echter Massenanfall erzeugt hier zuerst eine
     # Meldung. Die wichtigste Quelle ueberhaupt.
     "warnings": 60,

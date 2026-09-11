@@ -670,3 +670,40 @@ class KnowledgeEntry(Base):
     __table_args__ = (
         Index("ix_knowledge_kind_scope", "kind", "scope"),
     )
+
+
+class SocialPost(Base):
+    """Beitrag aus sozialen Netzen.
+
+    Soziale Netze sind der frueheste Kanal ueberhaupt: Wer auf einem Volksfest
+    steht und etwas sieht, schreibt darueber, lange bevor eine Leitstelle eine
+    Meldung herausgibt. Genau deshalb sind sie auch der unzuverlaessigste —
+    einzelne Beitraege sind Geruecht, nicht Lage.
+
+    Die Auswertung arbeitet deshalb nie mit einem einzelnen Beitrag, sondern
+    mit dem AUFKOMMEN: Ein ploetzlicher Anstieg mehrerer unabhaengiger Konten
+    zu einem Ort ist das Signal. Dafuer muessen die Beitraege einzeln
+    gespeichert werden — sonst laesst sich kein Anstieg messen.
+    """
+    __tablename__ = "social_posts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(50), nullable=False)        # mastodon, bluesky
+    post_id = Column(String(300), unique=True)
+    author = Column(String(200))
+    content = Column(Text)
+    url = Column(String(1000), nullable=True)
+    # Erkannter Ortsbezug (siehe services/knowledge/geo.py)
+    place = Column(String(120), nullable=True)
+    scope = Column(String(40), nullable=True)
+    # Getroffene Stichworte und daraus abgeleitete Einstufung
+    keywords = Column(JSONB, default=list)
+    relevance = Column(Float, default=0.0)
+    # Deutet der Beitrag auf ein Ereignis hin — oder ist es Alltagsgeplauder?
+    is_incident = Column(Boolean, default=False)
+    posted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+
+    __table_args__ = (
+        Index("ix_social_incident_time", "is_incident", "posted_at"),
+        Index("ix_social_scope_time", "scope", "posted_at"),
+    )
