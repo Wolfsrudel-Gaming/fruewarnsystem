@@ -687,7 +687,8 @@ class SocialPost(Base):
     """
     __tablename__ = "social_posts"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source = Column(String(50), nullable=False)        # mastodon, bluesky
+    # mastodon, telegram, bluesky, x, facebook, instagram, tiktok
+    source = Column(String(50), nullable=False)
     post_id = Column(String(300), unique=True)
     author = Column(String(200))
     content = Column(Text)

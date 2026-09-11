@@ -13,14 +13,12 @@ services/knowledge/social_burst.py.
 QUELLEN
 Mastodon liefert oeffentliche Hashtag-Zeitleisten ohne Anmeldung — geprueft
 gegen mastodon.social, nrw.social und troet.cafe. Das ist die verlaessliche
-Grundlage.
+Grundlage und steht deshalb hier.
 
-Bluesky bietet eine oeffentliche API, verlangt fuer die Beitragssuche aber
-inzwischen eine Anmeldung. Der Abruf ist vorbereitet und schaltet sich selbst
-zu, sobald Zugangsdaten hinterlegt sind — ohne sie bleibt er still.
-
-Twitter/X und Instagram haben keine brauchbare offene Schnittstelle mehr und
-sind bewusst nicht enthalten.
+Alle uebrigen Netze — Telegram, Bluesky, X, Facebook, Instagram, TikTok —
+stehen in plattformen.py. Jedes davon liefert Beitraege in derselben Form;
+dieser Sammler weiss nicht, aus welchem Netz ein Beitrag stammt, und muss es
+auch nicht wissen. Die Bewertung ist fuer alle dieselbe.
 """
 
 import hashlib
@@ -31,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from app.collectors.social.plattformen import abrufen_alle
 from app.config import settings
 from app.models.database import async_session
 from app.models.schemas import SocialPost
@@ -231,6 +230,8 @@ async def collect_social():
                 roh.extend(await _mastodon_hashtag(client, instanz, tag))
         for begriff in ("Troisdorf", "Siegburg", "Puetzchens Markt"):
             roh.extend(await _bluesky(client, begriff))
+        # Alle weiteren Netze, soweit sie Zugangsdaten haben
+        roh.extend(await abrufen_alle(client))
 
     # Gleiche Beitraege von mehreren Instanzen zusammenfassen
     nach_id = {}

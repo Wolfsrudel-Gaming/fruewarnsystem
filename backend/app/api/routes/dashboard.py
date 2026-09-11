@@ -1412,8 +1412,16 @@ async def get_social(
 
     aufkommen = finde_aufkommen(posts)
 
+    # Aufschluesselung je Netz. Damit sichtbar wird, ob ein Netz nichts
+    # geliefert hat, weil nichts passiert ist — oder weil es gar nicht
+    # mithoert.
+    je_netz = {}
+    for p in posts:
+        je_netz[p.source] = je_netz.get(p.source, 0) + 1
+
     return {
         "count": len(posts),
+        "by_source": je_netz,
         "burst": aufkommen,
         "burst_text": beschreibe(aufkommen) if aufkommen else None,
         "unverified": True,
@@ -1437,6 +1445,35 @@ async def get_social(
             }
             for p in posts
         ],
+    }
+
+
+@router.get("/social/platforms")
+async def get_social_platforms():
+    """Welches soziale Netz hört gerade mit — und woran fehlt es sonst?
+
+    Ein stilles Netz kann zweierlei heißen: Es ist ruhig, oder es ist gar
+    nicht angeschlossen. Für ein Warnsystem ist das ein gewaltiger
+    Unterschied, deshalb steht er hier ausdrücklich.
+
+    Mastodon und Telegram laufen ohne Zugangsdaten. Alle übrigen Netze haben
+    ihre offenen Schnittstellen geschlossen: X rechnet je gelesenem Beitrag
+    ab, Facebook und Instagram verlangen ein Geschäftskonto mit von Meta
+    freigegebener App, TikTok einen bewilligten Forschungsantrag. Die Abrufe
+    sind gebaut und schalten sich selbst zu, sobald die Zugangsdaten
+    hinterlegt sind.
+    """
+    from app.collectors.social.plattformen import plattform_status
+
+    stand = plattform_status()
+    return {
+        "platforms": stand,
+        "aktiv": [p["key"] for p in stand if p["aktiv"]],
+        "still": [p["key"] for p in stand if not p["aktiv"]],
+        "hinweis": (
+            "Ein Netz ohne Zugangsdaten liefert nichts. Das ist kein Fehler, "
+            "sondern der Normalfall — es ist aber auch keine Entwarnung."
+        ),
     }
 
 

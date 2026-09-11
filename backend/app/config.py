@@ -110,11 +110,42 @@ class Settings(BaseSettings):
     # Waehrend einer Grosslage weiter verkuerzt (siehe grosslagen.py).
     interval_social: int = 300
 
-    # Bluesky-Beitragssuche verlangt eine Anmeldung. Ohne Zugangsdaten bleibt
-    # der Abruf still; Mastodon laeuft ohne. App-Passwort verwenden, nie das
-    # Kontopasswort.
+    # ------------------------------------------------------------------
+    # Zugaenge zu den sozialen Netzen
+    #
+    # Mastodon und Telegram laufen ohne alles. Alle anderen Netze haben ihre
+    # offenen Schnittstellen geschlossen und verlangen Geld, ein
+    # Geschaeftskonto oder eine Pruefung. Die Abrufe sind fertig gebaut und
+    # schalten sich selbst zu, sobald die Zugangsdaten hier stehen — ohne sie
+    # bleibt die Plattform still. Einzelheiten: collectors/social/plattformen.py
+    # ------------------------------------------------------------------
+
+    # Bluesky: App-Passwort verwenden, nie das Kontopasswort.
     bluesky_handle: str = ""
     bluesky_app_password: str = ""
+
+    # Telegram: oeffentliche Kanaele, kommagetrennt, ohne @. Es gibt keine
+    # Suche — Kanaele muessen namentlich bekannt sein. Deutsche Behoerden
+    # nutzen Telegram kaum; voreingestellt ist deshalb nur die tagesschau,
+    # die bei einer ueberoertlichen Lage frueh berichtet.
+    telegram_kanaele: str = "tagesschau"
+
+    # X (Twitter): App-only Bearer Token aus dem Entwicklerportal.
+    # ACHTUNG: X rechnet je gelesenem Beitrag ab. Kein Token = keine Kosten.
+    x_bearer_token: str = ""
+
+    # Meta (Facebook und Instagram teilen sich einen Zugang):
+    # langlebiges Zugriffstoken der App.
+    meta_access_token: str = ""
+    # Facebook-Seiten, kommagetrennt (Kennung oder Name in der Adresse).
+    # Fremde Seiten setzen die Freigabe "Page Public Content Access" voraus.
+    facebook_seiten: str = ""
+    # Instagram: Kennung des Geschaeftskontos, ueber das gesucht wird.
+    instagram_business_id: str = ""
+
+    # TikTok Research API: Zugangsdaten aus dem bewilligten Forschungsantrag.
+    tiktok_client_key: str = ""
+    tiktok_client_secret: str = ""
 
     model_config = {"env_file": ".env", "env_prefix": "FWS_"}
 
