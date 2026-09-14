@@ -9,6 +9,7 @@ import feedparser
 from app.config import settings
 from app.models.database import async_session
 from app.models.schemas import NewsItem
+from app.services.quellen_monitor import melde_abruf
 
 logger = logging.getLogger(__name__)
 
@@ -18,40 +19,67 @@ logger = logging.getLogger(__name__)
 # darueber wird berichtet.
 RSS_FEEDS = [
     # --- Kerngebiet: Troisdorf und Siegburg ---
-    {"name": "GA Troisdorf",
+    {"name": "GA Troisdorf", "bereich": "kern",
      "url": "https://ga.de/region/sieg-und-rhein/troisdorf/feed.rss"},
-    {"name": "GA Siegburg",
+    {"name": "GA Siegburg", "bereich": "kern",
      "url": "https://ga.de/region/sieg-und-rhein/siegburg/feed.rss"},
-    {"name": "Feuerwehr Troisdorf (Verein)",
+    {"name": "Feuerwehr Troisdorf (Verein)", "bereich": "kern",
      "url": "https://www.feuerwehr-troisdorf.de/?format=feed&type=rss"},
+    # Buergerportal fuer Troisdorf. Ersetzt den abgeschalteten RSS-Kanal der
+    # Stadt und ist die einzige verbliebene Quelle, die rein oertlich
+    # berichtet — am 14.09.2026 als einzige mit der Jugendfeuerwehr-Grossuebung.
+    {"name": "Treffpunkt Troisdorf", "bereich": "kern",
+     "url": "https://treffpunkt-troisdorf.de/feed/"},
 
     # --- Kreis: Blaulicht und Region ---
-    # Kreispolizeibehoerde Rhein-Sieg-Kreis auf presseportal — die einzige
-    # dedizierte Blaulicht-Quelle mit Kreisbezug, die verlaesslich liefert.
-    {"name": "Polizei Rhein-Sieg-Kreis",
+    {"name": "Polizei Rhein-Sieg-Kreis", "bereich": "kreis",
      "url": "https://www.presseportal.de/rss/dienststelle_65853.rss2"},
-    {"name": "GA Region Sieg und Rhein",
-     "url": "https://ga.de/region/sieg-und-rhein/feed.rss"},
+    # Polizei Bonn und Feuerwehr Bonn ueber presseportal. Die Feeds auf
+    # polizei.nrw sind von hier aus nicht erreichbar; presseportal fuehrt
+    # dieselben Meldungen und ist verlaesslich abrufbar.
+    {"name": "Polizei Bonn", "bereich": "kreis",
+     "url": "https://www.presseportal.de/rss/dienststelle_7304.rss2"},
+    {"name": "Feuerwehr und Rettungsdienst Bonn", "bereich": "kreis",
+     "url": "https://www.presseportal.de/rss/dienststelle_115888.rss2"},
+    # Bundespolizeidirektion Sankt Augustin — zustaendig fuer Bahnanlagen und
+    # den Flughafen Koeln/Bonn. Faengt Lagen ab, die sonst nirgends stehen.
+    {"name": "Bundespolizei Sankt Augustin", "bereich": "kreis",
+     "url": "https://www.presseportal.de/rss/dienststelle_70116.rss2"},
+    {"name": "General-Anzeiger Bonn", "bereich": "kreis",
+     "url": "https://ga.de/feed.rss"},
+    {"name": "WDR Rheinland", "bereich": "kreis",
+     "url": "https://www1.wdr.de/nachrichten/rheinland/index~_format-mp-100.feed"},
 
     # --- Bundesweit, wird ueber den Ortsbezug gefiltert ---
     # Nur 15 Eintraege je Abruf, deshalb als Ergaenzung gedacht, nicht als
     # Hauptquelle. Faengt Feuerwehr-Meldungen ab, die sonst nirgends stehen.
     {"name": "Presseportal Feuerwehr", "bundesweit": True,
+     "bereich": "bundesweit",
      "url": "https://www.presseportal.de/rss/feuerwehr.rss2"},
     {"name": "Presseportal Blaulicht", "bundesweit": True,
+     "bereich": "bundesweit",
      "url": "https://www.presseportal.de/rss/blaulicht.rss2"},
-
-    # --- Bestand ---
-    {"name": "General-Anzeiger Bonn", "url": "https://ga.de/feed.rss"},
-    {"name": "Kölner Stadt-Anzeiger", "url": "https://www.ksta.de/feed/index.rss"},
-    {"name": "Kölnische Rundschau", "url": "https://www.rundschau-online.de/feed/index.rss"},
-    {"name": "WDR Nachrichten", "url": "https://www1.wdr.de/nachrichten/rheinland/index~_format-mp-100.feed"},
-    {"name": "Rhein-Sieg-Anzeiger", "url": "https://www.ksta.de/region/rhein-sieg-bonn/feed.rss"},
-    {"name": "Polizei Bonn", "url": "https://bonn.polizei.nrw/presse/feed"},
-    {"name": "Feuerwehr Troisdorf", "url": "https://www.troisdorf.de/web/de/rathaus/news/rss.htm"},
-    {"name": "Feuerwehr Bonn", "url": "https://www.bonn.de/pressemitteilungen.feed"},
-    {"name": "WDR Lokalzeit Bonn", "url": "https://www1.wdr.de/nachrichten/rheinland/lokalzeit-bonn-100~_format-mp-100.feed"},
 ]
+
+# Entfernt am 14.09.2026, nachdem sie beim Durchmessen aller Quellen als tot
+# aufgefallen waren. Sie stehen hier namentlich, damit niemand sie
+# versehentlich wieder eintraegt — und als Beleg dafuer, wie lautlos so
+# etwas passiert.
+AUSGEMUSTERT = {
+    # Verlag hat die Feeds abgeschaltet, HTTP 410 Gone. Kein Ersatz bekannt.
+    "Kölner Stadt-Anzeiger": "HTTP 410 — Feed abgeschaltet",
+    "Kölnische Rundschau": "HTTP 410 — Feed abgeschaltet",
+    "Rhein-Sieg-Anzeiger": "HTTP 410 — Feed abgeschaltet",
+    # Lieferte HTTP 200 mit 830 Byte und null Eintraegen. Der gefaehrlichste
+    # Fall: sah wie eine funktionierende, ruhige Quelle aus.
+    "GA Region Sieg und Rhein": "HTTP 200, aber dauerhaft leer",
+    # Adressen umgezogen; die Staedte bieten keinen RSS-Kanal mehr an.
+    "Feuerwehr Troisdorf (Stadt)": "HTTP 404 — Stadt Troisdorf ohne RSS",
+    "Feuerwehr Bonn (Stadt)": "HTTP 404 — Stadt Bonn ohne RSS",
+    "WDR Lokalzeit Bonn": "HTTP 404 — Adresse umgezogen",
+    # Ersetzt durch presseportal-Dienststelle 7304.
+    "Polizei Bonn (polizei.nrw)": "TLS-/Verbindungsfehler",
+}
 
 KEYWORDS_HIGH = [
     "hochwasser", "überschwemmung", "evakuierung", "großeinsatz", "katastrophe",
@@ -87,12 +115,19 @@ async def collect_news():
 
     async with httpx.AsyncClient() as client:
         for feed_info in RSS_FEEDS:
+            # Jeder Abruf wird gemeldet — auch und gerade der misslungene.
+            # Vorher wurde eine Quelle, die nicht mit 200 antwortete, still
+            # uebersprungen. Acht Quellen waren so ueber unbekannte Zeit tot,
+            # ohne dass es irgendwo auffiel: Das Ergebnis sah aus wie Ruhe.
+            status_code, anzahl, fehler = None, 0, None
             try:
                 resp = await client.get(feed_info["url"], timeout=20, follow_redirects=True)
+                status_code = resp.status_code
                 if resp.status_code != 200:
                     continue
 
                 feed = feedparser.parse(resp.text)
+                anzahl = len(feed.entries)
                 for entry in feed.entries[:20]:
                     title = entry.get("title", "")
                     summary = entry.get("summary", entry.get("description", ""))
@@ -123,7 +158,13 @@ async def collect_news():
                         "content_hash": content_hash,
                     })
             except Exception as e:
+                fehler = e
                 logger.warning(f"Error fetching feed {feed_info['name']}: {e}")
+            finally:
+                await melde_abruf(
+                    feed_info["name"], collector="news",
+                    bereich=feed_info.get("bereich"), url=feed_info["url"],
+                    status_code=status_code, eintraege=anzahl, fehler=fehler)
 
     new_items = []
     async with async_session() as session:

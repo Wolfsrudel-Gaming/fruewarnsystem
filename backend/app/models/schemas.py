@@ -672,6 +672,41 @@ class KnowledgeEntry(Base):
     )
 
 
+class SourceHealth(Base):
+    """Gesundheitszustand einer Datenquelle.
+
+    Am 14.09.2026 kam heraus, dass acht von sechzehn Nachrichtenquellen seit
+    unbekannter Zeit nichts mehr lieferten — zwei abgeschaltet, drei umgezogen,
+    eine antwortete mit einer leeren Seite. Zu sehen war davon nichts: Der
+    Sammler uebersprang jede Quelle, die nicht mit 200 antwortete.
+
+    Eine ausgefallene und eine ruhige Quelle sehen im Ergebnis gleich aus.
+    Fuer ein Warnsystem ist der Unterschied alles. Diese Tabelle haelt fest,
+    wann eine Quelle zuletzt WIRKLICH etwas geliefert hat — nicht nur, wann
+    sie zuletzt geantwortet hat.
+    """
+    __tablename__ = "source_health"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # Eindeutiger Name der Quelle, so wie der Sammler sie kennt
+    name = Column(String(120), unique=True, nullable=False)
+    # Welcher Sammler (news, warnings, social ...)
+    collector = Column(String(60), nullable=True)
+    # kern | kreis | bundesweit — wie schwer ein Ausfall wiegt
+    bereich = Column(String(30), nullable=True)
+    url = Column(String(1000), nullable=True)
+    # ok | stumm | fehler | unerreichbar | unbekannt
+    last_status = Column(String(30), default="unbekannt")
+    last_http_code = Column(Integer, nullable=True)
+    last_entry_count = Column(Integer, default=0)
+    last_error = Column(String(500), nullable=True)
+    # Wann zuletzt tatsaechlich Eintraege kamen. Das ist die entscheidende
+    # Spalte — "hat geantwortet" ist nicht dasselbe wie "hat geliefert".
+    last_success_at = Column(DateTime, nullable=True)
+    last_checked_at = Column(DateTime, nullable=True)
+    consecutive_failures = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
 class SocialPost(Base):
     """Beitrag aus sozialen Netzen.
 

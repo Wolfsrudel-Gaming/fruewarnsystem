@@ -1477,6 +1477,35 @@ async def get_social_platforms():
     }
 
 
+@router.get("/sources")
+async def get_sources():
+    """Welche Quellen liefern gerade — und welche sind blind?
+
+    Am 14.09.2026 stellte sich heraus, dass acht von sechzehn
+    Nachrichtenquellen seit unbekannter Zeit nichts mehr lieferten: zwei
+    Verlagsfeeds abgeschaltet, drei kommunale Adressen umgezogen, eine
+    antwortete mit einer leeren Seite. Zu sehen war davon nichts — der
+    Sammler übersprang jede Quelle, die nicht mit 200 antwortete.
+
+    Eine ausgefallene und eine ruhige Quelle sehen im Ergebnis gleich aus.
+    Für ein Warnsystem ist der Unterschied alles: Das eine heißt „es ist
+    nichts passiert", das andere „wir würden es nicht merken".
+
+    Am gefährlichsten ist der Status `stumm` — HTTP 200 ohne Einträge. Der
+    Abruf gilt technisch als gelungen, und das Ergebnis sieht aus wie Ruhe.
+    """
+    from app.services.quellen_monitor import quellenlage
+
+    lage = await quellenlage()
+    return {
+        **lage,
+        "hinweis": (
+            "Eine stille Quelle ist keine Entwarnung. Kaputte Quellen stehen "
+            "oben."
+        ),
+    }
+
+
 @router.get("/vigilance")
 async def get_vigilance():
     """Arbeitet das System gerade im verschärften Modus?
