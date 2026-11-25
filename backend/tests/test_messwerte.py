@@ -36,6 +36,9 @@ from app.collectors.water.pegel_collector import (
     RIVER_THRESHOLDS, SCHWELLEN_REIHENFOLGE, classify_water_level,
     schwellen_aus_kennwerten,
 )
+from app.collectors.traffic.traffic_collector import (
+    UMKREIS_KM, entfernung_km, ist_in_der_naehe,
+)
 from app.services.alert.alert_engine import WBI_TEXT, wbi_punkte
 
 # Echte Kennwerte, am 25.11.2026 von PEGELONLINE abgerufen.
@@ -276,6 +279,56 @@ def test_ortsgewichte_sind_geordnet():
     assert (ORTSGEWICHT["troisdorf"] >= ORTSGEWICHT["nachbarschaft"]
             > ORTSGEWICHT["rhein_sieg"] > ORTSGEWICHT["ausserhalb"]
             > ORTSGEWICHT_FERN)
+
+
+# --- Verkehr: raeumlicher Filter ---
+
+def test_entfernung_stimmt_grob():
+    """Troisdorf -> Koeln Dom sind etwa 20 km Luftlinie."""
+    d = entfernung_km(50.8159, 7.1533, 50.9413, 6.9583)
+    assert 15 < d < 25, d
+
+
+def test_entfernung_zu_sich_selbst_ist_null():
+    assert entfernung_km(50.8159, 7.1533, 50.8159, 7.1533) == 0
+
+
+def test_entfernung_bei_muell_ist_none():
+    for a, b in ((None, 7.0), ("x", 7.0), (50.8, None)):
+        assert entfernung_km(a, b, 50.8, 7.1) is None
+
+
+def test_meldung_vor_der_haustuer_zaehlt():
+    # A59 Troisdorf - Köln-Wahn, real am 25.11.2026
+    assert ist_in_der_naehe(50.8110, 7.1281)
+
+
+def test_meldung_aus_bayern_zaehlt_nicht():
+    """Der gemeldete Fehler. Die Autobahn-Schnittstelle liefert je Strasse
+    ALLE Meldungen bundesweit — die A3 reicht bis Passau. Ohne Filter stand
+    jede davon als Marker auf der Lagekarte."""
+    assert not ist_in_der_naehe(48.8218, 12.9299)   # Metten an der A3
+    assert not ist_in_der_naehe(49.5370, 11.0350)   # Nuernberg an der A3
+
+
+def test_meldung_ohne_koordinate_wird_behalten():
+    """Eine fehlende Koordinate ist eine Luecke, kein Beweis fuer Ferne. Eine
+    Vollsperrung wegzuwerfen, weil ein Feld leer ist, waere der teurere
+    Fehler."""
+    assert ist_in_der_naehe(None, None)
+    assert ist_in_der_naehe(50.8, None)
+
+
+def test_umkreis_ist_groesser_als_der_app_radius():
+    """Eine Vollsperrung 50 km stromaufwaerts verlegt den Verkehr hierher.
+    Der Verkehrsumkreis ist deshalb bewusst weiter als der Kartenradius."""
+    from app.config import settings
+    assert UMKREIS_KM >= settings.default_radius_km
+
+
+def test_umkreis_bleibt_regional():
+    """Gross genug fuer den Grossraum, klein genug um Bayern auszuschliessen."""
+    assert 30 <= UMKREIS_KM <= 100
 
 
 if __name__ == "__main__":

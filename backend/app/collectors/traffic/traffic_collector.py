@@ -13,6 +13,54 @@ AUTOBAHN_API_BASE = "https://verkehr.autobahn.de/o/autobahn"
 
 RELEVANT_ROADS = ["A59", "A565", "A3", "A555", "A560", "A61"]
 
+# Die Autobahn-Schnittstelle liefert je Strasse ALLE Meldungen bundesweit.
+# A3 und A61 laufen quer durch Deutschland: Am 25.11.2026 standen in der
+# A3-Antwort Meldungen aus Metten (48,82 N) und Nuernberg (49,54 N) — rund
+# 400 km entfernt. Ohne raeumlichen Filter landeten die alle in der Datenbank
+# und als Marker auf der Lagekarte. Dieselbe Verwechslung wie bei den
+# Nachrichten: "liegt an einer Strasse, die hier vorbeikommt" ist kein
+# Ortsbezug.
+#
+# Der Umkreis ist bewusst groesser als der Standardradius der App: Eine
+# Vollsperrung 50 km stromaufwaerts verlegt den Verkehr hierher und bindet
+# Kraefte, auch wenn sie nicht vor der Haustuer liegt.
+UMKREIS_KM = 60
+ERDRADIUS_KM = 6371.0
+
+
+def entfernung_km(lat1, lon1, lat2, lon2):
+    """Abstand zweier Punkte auf der Erde in Kilometern (Haversine).
+
+    Reine Funktion, damit der Filter ohne Netz pruefbar bleibt.
+    """
+    from math import asin, cos, radians, sin, sqrt
+    try:
+        lat1, lon1, lat2, lon2 = (float(lat1), float(lon1),
+                                  float(lat2), float(lon2))
+    except (TypeError, ValueError):
+        return None
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = (sin(dlat / 2) ** 2
+         + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2)
+    return 2 * ERDRADIUS_KM * asin(sqrt(a))
+
+
+def ist_in_der_naehe(lat, lon, umkreis_km=UMKREIS_KM):
+    """Liegt der Punkt im Umkreis?
+
+    Eine Meldung OHNE Koordinate wird behalten. Die Autobahn-Schnittstelle
+    liefert zwar durchgaengig Koordinaten, aber eine fehlende Angabe ist eine
+    Luecke und kein Beweis fuer Ferne — und eine Vollsperrung wegzuwerfen,
+    weil ein Feld leer ist, waere der teurere Fehler.
+    """
+    if lat is None or lon is None:
+        return True
+    abstand = entfernung_km(settings.center_lat, settings.center_lon, lat, lon)
+    if abstand is None:
+        return True
+    return abstand <= umkreis_km
+
 
 async def collect_traffic():
     logger.info("Collecting traffic data...")
@@ -56,14 +104,18 @@ async def _fetch_road_warnings(client: httpx.AsyncClient, road: str) -> list:
 
         for w in warnings:
             coord = w.get("coordinate", {})
+            lat = float(coord.get("lat", 0)) if coord.get("lat") else None
+            lon = float(coord.get("long", 0)) if coord.get("long") else None
+            if not ist_in_der_naehe(lat, lon):
+                continue
             results.append({
                 "event_id": f"ab_{road}_{w.get('identifier', w.get('extent', ''))}",
                 "road": road,
                 "event_type": _map_event_type(w.get("abnormalTrafficType", w.get("title", ""))),
                 "title": w.get("title", w.get("subtitle", "")),
                 "description": "\n".join(w.get("description", [])) if isinstance(w.get("description"), list) else w.get("description"),
-                "lat": float(coord.get("lat", 0)) if coord.get("lat") else None,
-                "lon": float(coord.get("long", 0)) if coord.get("long") else None,
+                "lat": lat,
+                "lon": lon,
                 "severity": _estimate_severity(w),
                 "is_active": True,
                 "source": "autobahn_api",
@@ -89,14 +141,18 @@ async def _fetch_road_closures(client: httpx.AsyncClient, road: str) -> list:
 
         for c in closures:
             coord = c.get("coordinate", {})
+            lat = float(coord.get("lat", 0)) if coord.get("lat") else None
+            lon = float(coord.get("long", 0)) if coord.get("long") else None
+            if not ist_in_der_naehe(lat, lon):
+                continue
             results.append({
                 "event_id": f"ab_closure_{road}_{c.get('identifier', '')}",
                 "road": road,
                 "event_type": "closure",
                 "title": c.get("title", ""),
                 "description": "\n".join(c.get("description", [])) if isinstance(c.get("description"), list) else c.get("description"),
-                "lat": float(coord.get("lat", 0)) if coord.get("lat") else None,
-                "lon": float(coord.get("long", 0)) if coord.get("long") else None,
+                "lat": lat,
+                "lon": lon,
                 "severity": 60,
                 "is_active": True,
                 "source": "autobahn_api",
