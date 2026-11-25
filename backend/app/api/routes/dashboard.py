@@ -1079,10 +1079,14 @@ async def get_power_detail(
     bundesweiten.
     """
     cutoff = datetime.utcnow() - timedelta(hours=hours)
+    # Nach MESSZEIT filtern, nicht nach Erfassungszeit. SMARD veröffentlicht
+    # mit etwa einer Stunde Rückstand; wer nach created_at filtert, bekommt
+    # Messpunkte, die außerhalb des angefragten Fensters liegen, und zeichnet
+    # sie dann in eine Achse, die dieses Fenster beschriftet.
     rows = (await db.execute(
         select(GridStatus)
-        .where(GridStatus.created_at > cutoff)
-        .order_by(desc(GridStatus.timestamp))
+        .where(GridStatus.timestamp > cutoff)
+        .order_by(desc(GridStatus.timestamp), desc(GridStatus.created_at))
     )).scalars().all()
 
     if not rows:
@@ -1090,6 +1094,13 @@ async def get_power_detail(
 
     regions = {}
     history = []
+    # SMARD liefert stündlich, der Collector fragt alle 15 Minuten ab — also
+    # landen vier Zeilen mit demselben Messzeitpunkt in der Datenbank. In den
+    # Verlauf gehört jeder Zeitpunkt genau einmal, sonst stehen vier Punkte
+    # senkrecht übereinander und die geglättete Kurve zieht daraus Zacken.
+    # Die Zeilen sind absteigend sortiert, die erste je Zeitpunkt ist die
+    # zuletzt erfasste.
+    gesehen = set()
     for r in rows:
         raw = r.raw_data if isinstance(r.raw_data, dict) else {}
         entry = {
@@ -1113,6 +1124,10 @@ async def get_power_detail(
         if r.region not in regions:
             regions[r.region] = entry
 
+        schluessel = (r.region, entry["timestamp"])
+        if schluessel in gesehen:
+            continue
+        gesehen.add(schluessel)
         history.append({
             "region": r.region,
             "timestamp": entry["timestamp"],
@@ -1125,6 +1140,10 @@ async def get_power_detail(
 
     # Bundeswert zuerst, dann die Regelzonen
     ordered = sorted(regions.values(), key=lambda x: (x["region"] != "DE", x["region"]))
+    # Der Verlauf geht vorwärts. Absteigend ausgeliefert muss jeder Abnehmer
+    # selbst daran denken, umzudrehen — und wer es vergisst, zeichnet die
+    # Zeit rückwärts.
+    history.sort(key=lambda h: (h["region"], h["timestamp"] or ""))
 
     return {
         "regions": ordered,

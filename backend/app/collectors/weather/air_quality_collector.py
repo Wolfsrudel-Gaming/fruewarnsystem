@@ -25,8 +25,12 @@ async def collect_air_quality():
         uba_data = await _fetch_uba(client)
         results.extend(uba_data)
 
-        openaq_data = await _fetch_openaq(client)
-        results.extend(openaq_data)
+        # OpenAQ abgeschaltet: Die v2-Schnittstelle antwortet seit 2026 mit
+        # HTTP 410 ("Version 1 and Version 2 API endpoints are retired"), v3
+        # verlangt einen API-Schluessel. Das Umweltbundesamt deckt dieselben
+        # Messwerte ab, laeuft ohne Schluessel und ist die amtliche Quelle —
+        # der Abruf unten bleibt deshalb die einzige.
+        # Geprueft am 25.11.2026.
 
     async with async_session() as session:
         for data in results:
@@ -74,6 +78,16 @@ async def _fetch_uba(client: httpx.AsyncClient) -> list:
 
 
 async def _fetch_openaq(client: httpx.AsyncClient) -> list:
+    """Nicht mehr genutzt — OpenAQ v2 ist abgeschaltet (HTTP 410).
+
+    Bleibt stehen, damit niemand den Ausfall fuer einen Fehler haelt. Fuer
+    eine Rueckkehr braeuchte es v3 samt API-Schluessel; das Umweltbundesamt
+    liefert dieselben Werte ohne.
+    """
+    return []
+
+
+async def _fetch_openaq_alt(client: httpx.AsyncClient) -> list:
     results = []
     try:
         url = "https://api.openaq.org/v2/latest"

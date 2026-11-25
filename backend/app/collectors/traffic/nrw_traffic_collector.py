@@ -9,6 +9,15 @@ from app.models.schemas import TrafficEvent
 
 logger = logging.getLogger(__name__)
 
+# Am 25.11.2026 geprueft: Die Schnittstelle antwortet mit HTTP 404 und einer
+# HTML-Fehlerseite (209 KB) — sie ist abgeschaltet oder umgezogen, ein
+# Nachfolger ist nicht oeffentlich dokumentiert. Weil 404 mit grossem
+# HTML-Koerper kommt, sah der Abruf in jeder Pruefung, die nur auf die
+# Antwortgroesse schaut, nach einer ergiebigen Quelle aus.
+#
+# Die Autobahn-GmbH-Schnittstelle (traffic_collector.py) deckt A3, A59 und
+# A560 ab und laeuft; damit ist das Kerngebiet versorgt. Was fehlt, sind
+# Landes- und Kreisstrassen.
 NRW_TRAFFIC_URL = "https://verkehr.nrw/web/api/its/trafficInformation/getAll"
 
 TROISDORF_LAT = 50.8159

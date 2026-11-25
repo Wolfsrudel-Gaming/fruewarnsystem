@@ -793,12 +793,40 @@ async def _calc_weather_score(session) -> dict:
     }
 
 
+# Der DWD-Waldbrandgefahrenindex hat fuenf Stufen, und die unterste bedeutet
+# ausdruecklich "sehr geringe Gefahr". Die frueher verwendete Rechnung
+# Stufe * 20 gab genau dieser Entwarnung 20 Punkte — im November, bei Frost
+# und nach Regen, zeigte das System damit dauerhaft eine Waldbrandgefahr an,
+# die der DWD gerade verneint. Stufe 1 und 2 sind keine Gefahr, sondern deren
+# Abwesenheit, und muessen entsprechend bei beinahe null liegen.
+WBI_PUNKTE = {0: 0, 1: 0, 2: 10, 3: 35, 4: 65, 5: 100}
+WBI_TEXT = {
+    1: "sehr geringe Gefahr", 2: "geringe Gefahr", 3: "mittlere Gefahr",
+    4: "hohe Gefahr", 5: "sehr hohe Gefahr",
+}
+
+
+def wbi_punkte(stufe) -> int:
+    """Punktwert einer WBI-Stufe. Reine Funktion, damit pruefbar."""
+    try:
+        stufe = int(stufe or 0)
+    except (TypeError, ValueError):
+        return 0
+    if stufe >= 5:
+        return WBI_PUNKTE[5]
+    return WBI_PUNKTE.get(stufe, 0)
+
+
 async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
     cutoff = datetime.utcnow() - timedelta(hours=12)
+    # Nach ZEIT sortieren, nicht nach Hoehe. Vorher stand hier
+    # order_by(risk_index.desc()) und der Score nahm das Maximum im Fenster —
+    # ein einzelner hoher Wert blieb damit stehen, auch wenn der DWD
+    # inzwischen entwarnt hatte.
     stmt = (
         select(FireRisk)
         .where(FireRisk.created_at > cutoff)
-        .order_by(FireRisk.risk_index.desc())
+        .order_by(FireRisk.created_at.desc())
     )
     result = await session.execute(stmt)
     risks = result.scalars().all()
@@ -807,23 +835,31 @@ async def _calc_fire_score(session, drought_indicator: float = 0) -> dict:
         return {"score": 0, "weight": 1.0, "detail": "Keine Daten",
                 "contributions": [], "drought_boost": 0}
 
-    max_index = max((r.risk_index or 0 for r in risks), default=0)
-    has_hotspots = any(r.satellite_hotspots for r in risks)
+    # Der aktuelle Stand je Region, nicht das Maximum ueber alle Messungen.
+    je_region = {}
+    for r in risks:
+        je_region.setdefault(r.region, r)
+    aktuell = list(je_region.values())
+
+    max_index = max((r.risk_index or 0 for r in aktuell), default=0)
+    has_hotspots = any(r.satellite_hotspots for r in aktuell)
     contributions = []
 
-    score = max_index * 20
-    if max_index > 0:
+    punkte = wbi_punkte(max_index)
+    score = punkte
+    if punkte > 0:
         contributions.append(_contrib(
             source="DWD Waldbrandgefahrenindex",
             source_type="dwd_fire_index",
             value=f"Stufe {max_index}/5",
-            points=max_index * 20,
-            reason=f"Waldbrandgefahrenindex {max_index} von 5",
+            points=punkte,
+            reason=(f"Waldbrandgefahrenindex {max_index} von 5 — "
+                    f"{WBI_TEXT.get(max_index, 'unbekannt')}"),
         ))
 
     if has_hotspots:
         score += 30
-        hotspot_regions = [r.region for r in risks if r.satellite_hotspots]
+        hotspot_regions = [r.region for r in aktuell if r.satellite_hotspots]
         contributions.append(_contrib(
             source="NASA FIRMS Satellitendaten",
             source_type="satellite",
@@ -1613,7 +1649,12 @@ async def _calc_shipping_score(session) -> dict:
         return {"score": 0, "weight": 0.3, "detail": "Keine Warnungen", "contributions": []}
 
     contributions = []
-    type_scores = {"closure": 60, "high_water": 50, "low_water": 40, "ice": 50, "construction": 10, "general": 15}
+    # "restriction" ist Hochwassermarke I: der Verkehr laeuft noch, aber mit
+    # Beschraenkung. Fehlt der Typ hier, faellt er auf den Standardwert 15
+    # zurueck und waere damit so belanglos wie eine Baustelle.
+    type_scores = {"closure": 60, "high_water": 50, "low_water": 40,
+                   "ice": 50, "restriction": 30, "construction": 10,
+                   "general": 15}
 
     for w in warnings:
         score = type_scores.get(w.warning_type, 15)

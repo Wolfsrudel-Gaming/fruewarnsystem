@@ -51,7 +51,8 @@ async def collect_shipping_warnings():
             if data["warning_id"] not in existing_ids:
                 session.add(RiverShippingWarning(**data))
                 new_count += 1
-                if data["warning_type"] in ("closure", "high_water", "low_water"):
+                if data["warning_type"] in ("closure", "high_water", "low_water",
+                                            "restriction"):
                     logger.warning("SHIPPING: %s (%s)", data["title"], data["river"])
         await session.commit()
 
@@ -109,6 +110,32 @@ async def _fetch_station(client: httpx.AsyncClient, name: str, uuid: str) -> lis
                 ),
                 valid_from=timestamp,
                 raw={"station": name, "uuid": uuid, "level": level, "chars": chars, "current": current},
+            ))
+
+        # Hochwassermarke I: Geschwindigkeit wird beschraenkt, die
+        # Schifffahrt laeuft aber weiter. Diese Stufe fehlte bisher ganz —
+        # gemeldet wurde erst die Einstellung bei Marke II, und bis dahin
+        # sah die Lage nach "keine Warnung" aus, obwohl der Verkehr schon
+        # eingeschraenkt war.
+        marke_1 = chars.get("M_I")
+        if (marke_1 is not None and level >= marke_1
+                and not (hsw is not None and level >= hsw)):
+            results.append(_warn(
+                warning_id=f"pegelonline_{uuid}_m1_{day}",
+                section=name,
+                warning_type="restriction",
+                title=(f"Hochwassermarke I Rhein Pegel {name}: {level:.0f} cm "
+                       f"(Marke I {marke_1:.0f} cm)"),
+                description=(
+                    f"Aktueller Wasserstand {level:.0f} cm liegt ueber "
+                    f"Hochwassermarke I ({marke_1:.0f} cm). Fuer die "
+                    f"Schifffahrt gilt eine Geschwindigkeitsbeschraenkung; "
+                    f"eingestellt wird sie erst ab Marke II"
+                    + (f" ({hsw:.0f} cm)" if hsw is not None else "") + "."
+                ),
+                valid_from=timestamp,
+                raw={"station": name, "uuid": uuid, "level": level,
+                     "chars": chars, "current": current},
             ))
 
         # Hochwasser: über HSW/MHW

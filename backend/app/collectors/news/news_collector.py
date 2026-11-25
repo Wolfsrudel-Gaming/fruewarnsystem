@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -88,6 +89,10 @@ KEYWORDS_HIGH = [
     "bombenentschärfung", "bombendrohung", "terrorismus", "erdbeben",
     "dammbruch", "deichbruch", "flutwelle", "stromausfall",
     "dürre", "trinkwassernotstand", "wassernotstand",
+    # Amtliche Warnungen an die Bevoelkerung sind fuer dieses System die
+    # wichtigste Nachrichtenlage ueberhaupt und fehlten in der Liste ganz.
+    "warntag", "behördenwarnung", "bevölkerungswarnung", "sirenenwarnung",
+    "sirenenprobe", "katwarn", "nina-warnung",
 ]
 
 KEYWORDS_MEDIUM = [
@@ -298,6 +303,12 @@ async def analyze_news_backlog(batch_size: int = 4, max_age_days: int = 7):
 # und die Kategorie wiegt seit der Profilkorrektur voll.
 ORTSGEWICHT = {
     "troisdorf": 1.0,
+    # Eine flaechendeckende Lage — "bundesweit", "Nordrhein-Westfalen" —
+    # schliesst uns mit ein und ist damit so ortsnah wie es nur geht. Dieser
+    # Schluessel fehlte, die Einstufung fiel auf den Standardwert fuer
+    # "unbekannt" zurueck. Beim bundesweiten Warntag blieb eine Meldung ueber
+    # ganz Deutschland damit unter der Relevanzschwelle.
+    "flaechendeckend": 1.0,
     "nachbarschaft": 0.9,
     "rhein_sieg": 0.75,
     # Ohne erkennbaren Ort: mittlere Einstufung. Viele regionale Feeds nennen
@@ -307,8 +318,46 @@ ORTSGEWICHT = {
 }
 
 
+# Presseportal-Meldungen beginnen mit einer Ortszeile: "Muenchen (ots) - ...".
+# Das ist die verlaesslichste Ortsangabe, die es in diesen Feeds gibt — sie
+# steht da immer und sie nennt den Ereignisort, nicht irgendeinen im Text
+# erwaehnten Ort.
+_OTS_ORT = re.compile(r"^\s*([A-ZÄÖÜ][\wÄÖÜäöüß ./-]{1,40}?)\s*\(ots\)")
+
+
+def ots_ort(summary: str):
+    """Ortszeile einer Presseportal-Meldung, falls vorhanden.
+
+    Reine Funktion, damit sie ohne Netz pruefbar bleibt.
+    """
+    treffer = _OTS_ORT.match(_clean_html(summary or ""))
+    return treffer.group(1).strip() if treffer else None
+
+
+# Nennt die Ortszeile einen Ort, den geo.py in KEINER Liste fuehrt, dann ist
+# die Meldung von weit her — Muenchen, Hamburg, Passau. Das ist eine Aussage
+# und kein fehlender Wert: Der Ereignisort steht da, er ist nur nicht unserer.
+#
+# Wichtig ist der Unterschied zu "ausserhalb". Dort stehen Koeln, Bonn,
+# Leverkusen, Duesseldorf — die weitere Umgebung. Koeln-Porz grenzt an
+# Troisdorf; ein Grossbrand dort gehoert ins System. Muenchen nicht. Beides
+# in einen Topf zu werfen war der Fehler.
+ORTSGEWICHT_FERN = 0.08
+
+
 def _calculate_relevance(title: str, summary: str,
                          bundesweit: bool = False) -> float:
+    """Relevanz einer Meldung.
+
+    Vorher war der Ortsbezug nur ein Faktor. Eine Meldung mit vielen
+    Stichworten erreichte damit auch von weit her die Schwelle: "Grossbrand in
+    einem Mehrfamilienhaus, Muenchen (ots)" sammelte 0,95 Stichwortpunkte, mal
+    Ortsgewicht 0,35 fuer "ausserhalb" blieben 0,33 — und damit galt ein Feuer
+    in Muenchen als relevant fuer Troisdorf.
+
+    Jetzt ist der Ortsbezug eine Bedingung. Was nicht von hier ist, kann die
+    Schwelle nicht mehr erreichen.
+    """
     text = f"{title} {summary}".lower()
     score = 0.0
 
@@ -327,12 +376,28 @@ def _calculate_relevance(title: str, summary: str,
     score = min(1.0, score)
 
     from app.services.knowledge.geo import detect_scope
+
     scope = detect_scope(title, summary)["scope"]
-    if scope == "unbekannt" and bundesweit:
-        # Bundesweite Quellen berichten per Definition ueberall her. Fehlt der
-        # Ortsbezug, ist die Meldung mit hoher Wahrscheinlichkeit nicht von
-        # hier — anders als bei einem Regionalfeed, wo das Gegenteil gilt.
-        scope = "ausserhalb"
+
+    # Eine flaechendeckende Lage gilt ueberall und damit auch hier. Sie
+    # schlaegt jede Ortszeile: Beim bundesweiten Warntag steht in der
+    # Ortszeile "Bonn", gemeint ist ganz Deutschland.
+    if scope != "flaechendeckend":
+        ort = ots_ort(summary)
+        if ort:
+            # Die Ortszeile nennt den EREIGNISORT und ist damit belastbarer
+            # als ein irgendwo im Text erwaehnter Ortsname.
+            ort_scope = detect_scope(ort)["scope"]
+            if ort_scope == "unbekannt":
+                return round(score * ORTSGEWICHT_FERN, 4)
+            scope = ort_scope
+        elif scope == "unbekannt" and bundesweit:
+            # Bundesweite Quellen berichten per Definition ueberall her.
+            # Fehlt jeder Ortsbezug, ist die Meldung mit hoher
+            # Wahrscheinlichkeit nicht von hier — anders als bei einem
+            # Regionalfeed, wo das Gegenteil gilt.
+            scope = "ausserhalb"
+
     return round(score * ORTSGEWICHT.get(scope, 0.6), 4)
 
 
